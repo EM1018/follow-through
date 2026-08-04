@@ -14,6 +14,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import get_settings
+from app.db import get_session
 from app.deps import CurrentUser, get_current_user
 from app.models import user as _user  # noqa: F401  (registers User on SQLModel.metadata)
 
@@ -51,14 +52,24 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Routes app.db.get_session to the test DB (5433) instead of DATABASE_URL (dev, 5432)."""
+    async with test_session_maker() as session:
+        yield session
+
+
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     from app.main import app
+
+    app.dependency_overrides[get_session] = _override_get_session
 
     transport = ASGITransport(app=app)
     # just needs a placeholder, hence test url
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+    app.dependency_overrides.pop(get_session, None)
 
 # helper to create a dummy token for testing, removing the need to go to supabase
 def make_token(user_id: UUID, email: str, *, expired: bool = False) -> str:
@@ -105,9 +116,11 @@ async def authed_client() -> AsyncGenerator[tuple[AsyncClient, CurrentUser], Non
 
     current_user = CurrentUser(user_id=uuid4(), email="fast-path@example.com")
     app.dependency_overrides[get_current_user] = lambda: current_user
+    app.dependency_overrides[get_session] = _override_get_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac, current_user
 
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_session, None)
