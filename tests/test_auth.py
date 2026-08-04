@@ -1,14 +1,12 @@
-from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import httpx
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import AsyncClient
-from jose import jwt
 
 from tests.conftest import AuthedUser, make_token
 
-# temp for testing actual 200 instead of 401 for wrong signature
-from app.config import get_settings
 
 @pytest.mark.asyncio
 async def test_me_without_token_is_401(client: AsyncClient) -> None:
@@ -32,17 +30,36 @@ async def test_me_with_expired_token_is_401(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_me_with_wrong_signature_is_401(client: AsyncClient) -> None:
-    now = datetime.now(UTC)
-    payload = {
-        "sub": str(uuid4()),
-        "email": "wrong-sig@example.com",
-        "aud": "authenticated",
-        "iat": now,
-        "exp": now + timedelta(hours=1),
-    }
-    token = jwt.encode(payload, "definitely-not-the-real-secret",  algorithm="HS256")
+    # signed with a *different* EC key than the one behind our fake JWKS's kid,
+    # so the kid resolves fine but the signature itself doesn't verify
+    wrong_key = ec.generate_private_key(ec.SECP256R1())
+    token = make_token(uuid4(), "wrong-sig@example.com", private_key=wrong_key)
     response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_with_unknown_kid_is_401(client: AsyncClient) -> None:
+    token = make_token(uuid4(), "ghost@example.com", kid="does-not-exist")
+    response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_when_jwks_endpoint_unreachable_is_503(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.deps import _HttpxPyJWKClient
+
+    def _raise(self: _HttpxPyJWKClient) -> None:
+        raise httpx.ConnectError("JWKS endpoint unreachable")
+
+    monkeypatch.setattr(_HttpxPyJWKClient, "fetch_data", _raise)
+
+    # an unrecognized kid forces a real fetch attempt even if the cache is warm
+    token = make_token(uuid4(), "unreachable@example.com", kid="not-in-cache")
+    response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 503
 
 
 @pytest.mark.asyncio

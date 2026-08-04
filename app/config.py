@@ -9,8 +9,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     DATABASE_URL: str
-    SUPABASE_JWT_SECRET: str
+    SUPABASE_JWKS_URL: str
     SUPABASE_URL: str
+    SUPABASE_ANON_KEY: str
 
 
 @lru_cache

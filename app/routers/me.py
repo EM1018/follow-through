@@ -7,8 +7,8 @@ from app.models.user import User
 
 router = APIRouter(tags=["me"])
 
-# creates row on first request 
-# next time, simply return it
+# creates row on first request
+# next time, simply return it'
 
 @router.get("/me", response_model=User)
 async def get_me(

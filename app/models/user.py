@@ -4,8 +4,8 @@ from datetime import datetime
 from sqlalchemy import Column, DateTime, func
 from sqlmodel import Field, SQLModel
 
-
 # this is our user model that allows us to create a user table using python
+
 
 class User(SQLModel, table=True):
     __tablename__ = "users"

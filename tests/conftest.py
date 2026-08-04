@@ -1,19 +1,22 @@
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
+import jwt
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
+from jwt.algorithms import ECAlgorithm
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.config import get_settings
 from app.db import get_session
 from app.deps import CurrentUser, get_current_user
 from app.models import user as _user  # noqa: F401  (registers User on SQLModel.metadata)
@@ -25,6 +28,19 @@ TEST_DATABASE_URL = os.environ.get(
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+# One EC keypair for the whole test session. Its public half is served as a fake JWKS
+# (see _patch_jwks_fetch below), so app.deps's real ES256 + JWKS verification path
+# runs end-to-end in tests without ever calling out to a real Supabase project.
+TEST_KID = "test-key-1"
+_TEST_EC_KEY = ec.generate_private_key(ec.SECP256R1())
+
+
+def _fake_jwks() -> dict[str, Any]:
+    jwk = ECAlgorithm.to_jwk(_TEST_EC_KEY.public_key(), as_dict=True)
+    jwk["kid"] = TEST_KID
+    jwk["use"] = "sig"
+    return {"keys": [jwk]}
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -44,6 +60,17 @@ async def _truncate_tables() -> AsyncGenerator[None, None]:
         table_names = ", ".join(f'"{table.name}"' for table in SQLModel.metadata.sorted_tables)
         if table_names:
             await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _patch_jwks_fetch() -> Generator[None, None, None]:
+    """Serve our fake JWKS instead of calling out to a real Supabase project."""
+    from app.deps import _HttpxPyJWKClient
+
+    original = _HttpxPyJWKClient.fetch_data
+    _HttpxPyJWKClient.fetch_data = lambda self: _fake_jwks()
+    yield
+    _HttpxPyJWKClient.fetch_data = original
 
 
 @pytest_asyncio.fixture
@@ -71,9 +98,17 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides.pop(get_session, None)
 
+
 # helper to create a dummy token for testing, removing the need to go to supabase
-def make_token(user_id: UUID, email: str, *, expired: bool = False) -> str:
-    """Sign a JWT the same way Supabase would, using the test env's shared secret."""
+def make_token(
+    user_id: UUID,
+    email: str,
+    *,
+    expired: bool = False,
+    kid: str = TEST_KID,
+    private_key: EllipticCurvePrivateKey | None = None,
+) -> str:
+    """Sign a JWT the same way Supabase would: ES256, matching the fake JWKS by default."""
     now = datetime.now(UTC)
     exp = now - timedelta(minutes=5) if expired else now + timedelta(hours=1)
     payload = {
@@ -83,7 +118,8 @@ def make_token(user_id: UUID, email: str, *, expired: bool = False) -> str:
         "iat": now,
         "exp": exp,
     }
-    return jwt.encode(payload, get_settings().SUPABASE_JWT_SECRET, algorithm="HS256")
+    key = private_key or _TEST_EC_KEY
+    return jwt.encode(payload, key, algorithm="ES256", headers={"kid": kid})
 
 
 @dataclass
@@ -96,7 +132,7 @@ class AuthedUser:
 @pytest.fixture
 def auth_headers() -> AuthedUser:
     """A valid Authorization header plus the identity it encodes, for asserting against.
-       Test can send and check response against it. 
+    Test can send and check response against it.
     """
     user_id = uuid4()
     email = "athlete@example.com"
