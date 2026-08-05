@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 
-from app.routers import me
+from app.routers import me, plans
 
 app = FastAPI(title="follow-through API")
 app.include_router(me.router)
+app.include_router(plans.router)
 
 
 @app.get("/health")

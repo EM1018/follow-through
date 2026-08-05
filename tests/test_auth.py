@@ -1,11 +1,13 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import AsyncClient
 
-from tests.conftest import AuthedUser, make_token
+from tests.conftest import _TEST_EC_KEY, TEST_KID, AuthedUser, make_token
 
 
 @pytest.mark.asyncio
@@ -60,6 +62,37 @@ async def test_me_when_jwks_endpoint_unreachable_is_503(
     token = make_token(uuid4(), "unreachable@example.com", kid="not-in-cache")
     response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_me_with_missing_email_claim_is_401(client: AsyncClient) -> None:
+    # validly signed (correct kid + key), but missing a claim get_current_user requires
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(uuid4()),
+        "aud": "authenticated",
+        "iat": now,
+        "exp": now + timedelta(hours=1),
+    }
+    token = jwt.encode(payload, _TEST_EC_KEY, algorithm="ES256", headers={"kid": TEST_KID})
+    response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_with_non_uuid_sub_is_401(client: AsyncClient) -> None:
+    # validly signed, but "sub" isn't a UUID get_current_user can parse
+    now = datetime.now(UTC)
+    payload = {
+        "sub": "not-a-uuid",
+        "email": "not-a-uuid@example.com",
+        "aud": "authenticated",
+        "iat": now,
+        "exp": now + timedelta(hours=1),
+    }
+    token = jwt.encode(payload, _TEST_EC_KEY, algorithm="ES256", headers={"kid": TEST_KID})
+    response = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

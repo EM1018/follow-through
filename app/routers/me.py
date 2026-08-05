@@ -10,6 +10,7 @@ router = APIRouter(tags=["me"])
 # creates row on first request
 # next time, simply return it'
 
+
 @router.get("/me", response_model=User)
 async def get_me(
     current_user: CurrentUser = Depends(get_current_user),

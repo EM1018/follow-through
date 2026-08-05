@@ -20,6 +20,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.db import get_session
 from app.deps import CurrentUser, get_current_user
 from app.models import user as _user  # noqa: F401  (registers User on SQLModel.metadata)
+from app.models.user import User
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -62,15 +63,22 @@ async def _truncate_tables() -> AsyncGenerator[None, None]:
             await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
 
 
+# The real fetch_data, stashed here so tests/test_jwks.py can temporarily restore
+# it (via monkeypatch) to exercise the real method body against a respx-mocked
+# HTTP layer, instead of this session-wide fake.
+real_jwks_fetch_data: Any = None
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _patch_jwks_fetch() -> Generator[None, None, None]:
     """Serve our fake JWKS instead of calling out to a real Supabase project."""
     from app.deps import _HttpxPyJWKClient
 
-    original = _HttpxPyJWKClient.fetch_data
+    global real_jwks_fetch_data
+    real_jwks_fetch_data = _HttpxPyJWKClient.fetch_data
     _HttpxPyJWKClient.fetch_data = lambda self: _fake_jwks()
     yield
-    _HttpxPyJWKClient.fetch_data = original
+    _HttpxPyJWKClient.fetch_data = real_jwks_fetch_data
 
 
 @pytest_asyncio.fixture
@@ -83,6 +91,16 @@ async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
     """Routes app.db.get_session to the test DB (5433) instead of DATABASE_URL (dev, 5432)."""
     async with test_session_maker() as session:
         yield session
+
+
+async def _create_user_row(current_user: CurrentUser) -> None:
+    """Fast-path fixtures fabricate a CurrentUser without a real login, but any table
+    with a real FK to users.id (plans, workouts, ...) needs that row to actually
+    exist. Without this, inserts fail with a ForeignKeyViolationError.
+    """
+    async with test_session_maker() as db_session:
+        db_session.add(User(id=current_user.user_id, email=current_user.email))
+        await db_session.commit()
 
 
 @pytest_asyncio.fixture
@@ -151,6 +169,7 @@ async def authed_client() -> AsyncGenerator[tuple[AsyncClient, CurrentUser], Non
     from app.main import app
 
     current_user = CurrentUser(user_id=uuid4(), email="fast-path@example.com")
+    await _create_user_row(current_user)
     app.dependency_overrides[get_current_user] = lambda: current_user
     app.dependency_overrides[get_session] = _override_get_session
 
@@ -160,3 +179,18 @@ async def authed_client() -> AsyncGenerator[tuple[AsyncClient, CurrentUser], Non
 
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_session, None)
+
+
+@pytest_asyncio.fixture
+async def second_user() -> CurrentUser:
+    """A second, distinct identity for ownership tests.
+
+    get_current_user's override lives on the shared `app` object, so only one
+    identity can be active at a time - there's no such thing as two simultaneous
+    authed_client "personas". For ownership tests, reuse authed_client's client and
+    reassign app.dependency_overrides[get_current_user] to this user immediately
+    before the specific request that should act as someone else.
+    """
+    current_user = CurrentUser(user_id=uuid4(), email="second-user@example.com")
+    await _create_user_row(current_user)
+    return current_user
