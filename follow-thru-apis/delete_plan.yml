@@ -1,0 +1,17 @@
+info:
+  name: delete_plan
+  type: http
+  seq: 12
+
+http:
+  method: DELETE
+  url: http://127.0.0.1:8000/plans/79c698ee-7017-43f6-9954-9f89a885640c
+  auth:
+    type: bearer
+    token: "{{token_test2_user}}|"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

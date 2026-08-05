@@ -1,0 +1,28 @@
+info:
+  name: patch_plan
+  type: http
+  seq: 10
+
+http:
+  method: PATCH
+  url: http://127.0.0.1:8000/plans/b2b29d67-c19a-4c25-a16c-9e50ed516393
+  body:
+    type: json
+    data: |-
+      {
+        "starts_on": "2026-08-09",
+        "ends_on": "2026-08-10",
+        "is_active": "False",
+        "visible_to_friends": "True",
+        "name": "summer body",
+        "id": "123" // nothing happens due to schema
+      }
+  auth:
+    type: bearer
+    token: "{{token}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
