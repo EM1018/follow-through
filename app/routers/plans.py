@@ -6,7 +6,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
-from app.deps import CurrentUser, get_current_user
+from app.deps import CurrentUser, get_current_user, get_owned_plan
 from app.models.plan import Plan
 from app.schemas.plan import PlanCreate, PlanRead, PlanUpdate
 
@@ -28,15 +28,6 @@ async def _deactivate_other_plans(
         statement = statement.where(Plan.id != except_plan_id)
     await session.exec(statement)
     await session.flush()
-
-
-async def _get_owned_plan(session: AsyncSession, plan_id: uuid.UUID, user_id: uuid.UUID) -> Plan:
-    plan = await session.get(Plan, plan_id)
-    if plan is None or plan.user_id != user_id:
-        # same 404 whether the plan doesn't exist or just isn't yours - never
-        # reveal which plan ids belong to someone else
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
-    return plan
 
 
 @router.post("", response_model=PlanRead, status_code=status.HTTP_201_CREATED)
@@ -67,22 +58,16 @@ async def list_plans(
 
 
 @router.get("/{plan_id}", response_model=PlanRead)
-async def get_plan(
-    plan_id: uuid.UUID,
-    current_user: CurrentUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> Plan:
-    return await _get_owned_plan(session, plan_id, current_user.user_id)
+async def get_plan(plan: Plan = Depends(get_owned_plan)) -> Plan:
+    return plan
 
 
 @router.patch("/{plan_id}", response_model=PlanRead)
 async def update_plan(
-    plan_id: uuid.UUID,
     body: PlanUpdate,
-    current_user: CurrentUser = Depends(get_current_user),
+    plan: Plan = Depends(get_owned_plan),
     session: AsyncSession = Depends(get_session),
 ) -> Plan:
-    plan = await _get_owned_plan(session, plan_id, current_user.user_id)
     updates = body.model_dump(exclude_unset=True)
 
     # validate against the *effective* result of this patch, since a partial
@@ -96,7 +81,7 @@ async def update_plan(
         )
 
     if updates.get("is_active") is True:
-        await _deactivate_other_plans(session, current_user.user_id, except_plan_id=plan.id)
+        await _deactivate_other_plans(session, plan.user_id, except_plan_id=plan.id)
 
     for field, value in updates.items():
         setattr(plan, field, value)
@@ -109,10 +94,8 @@ async def update_plan(
 
 @router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_plan(
-    plan_id: uuid.UUID,
-    current_user: CurrentUser = Depends(get_current_user),
+    plan: Plan = Depends(get_owned_plan),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    plan = await _get_owned_plan(session, plan_id, current_user.user_id)
     await session.delete(plan)
     await session.commit()

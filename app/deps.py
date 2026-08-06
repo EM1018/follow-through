@@ -8,8 +8,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import get_settings
+from app.db import get_session
+from app.models.plan import Plan
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -89,3 +92,22 @@ async def get_current_user(
         raise _UNAUTHORIZED from exc
 
     return CurrentUser(user_id=user_id, email=email)
+
+
+async def get_owned_plan(
+    plan_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Plan:
+    """Resolve plan_id from the URL, scoped to the current user.
+
+    Shared by any router whose path includes {plan_id} (plans, workouts, and future
+    nested resources) - FastAPI fills plan_id from whichever route's path contains
+    it, regardless of which function in the dependency tree declares the parameter.
+    """
+    plan = await session.get(Plan, plan_id)
+    if plan is None or plan.user_id != current_user.user_id:
+        # same 404 whether the plan doesn't exist or just isn't yours - never
+        # reveal which plan ids belong to someone else
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+    return plan

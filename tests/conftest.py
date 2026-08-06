@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -194,3 +194,26 @@ async def second_user() -> CurrentUser:
     current_user = CurrentUser(user_id=uuid4(), email="second-user@example.com")
     await _create_user_row(current_user)
     return current_user
+
+
+@pytest.fixture
+def make_plan() -> Callable[..., Any]:
+    """Composable plan factory: POSTs to the real /plans endpoint (using whichever
+    client and identity are currently active) rather than inserting rows directly,
+    so tests that need "a plan to hang workouts off of" don't duplicate plan-creation
+    logic that already lives in app/routers/plans.py.
+    """
+
+    async def _make_plan(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": "Test Plan",
+            "starts_on": datetime.now(UTC).date().isoformat(),
+            "ends_on": None,
+            "visible_to_friends": False,
+        }
+        payload.update(overrides)
+        response = await client.post("/plans", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _make_plan
