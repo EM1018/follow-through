@@ -1,0 +1,7 @@
+info:
+  name: plan_endpoints
+  type: folder
+  seq: 6
+
+request:
+  auth: inherit

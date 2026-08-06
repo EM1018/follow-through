@@ -1,0 +1,24 @@
+info:
+  name: create_plan
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: http://127.0.0.1:8000/plans
+  body:
+    type: json
+    data: |-
+      {
+        "name":"cardio", 
+        "starts_on":"2026-08-06"
+      }
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
