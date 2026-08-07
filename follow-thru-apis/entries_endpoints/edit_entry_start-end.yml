@@ -1,0 +1,15 @@
+info:
+  name: edit_entry_start/end
+  type: http
+  seq: 3
+
+http:
+  method: PATCH
+  url: ""
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
