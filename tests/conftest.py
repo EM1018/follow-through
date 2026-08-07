@@ -1,22 +1,26 @@
+import asyncio
 import os
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import jwt
 import pytest
 import pytest_asyncio
+from alembic.config import Config
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from httpx import ASGITransport, AsyncClient
 from jwt.algorithms import ECAlgorithm
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from alembic import command
+from app.config import get_settings
 from app.db import get_session
 from app.deps import CurrentUser, get_current_user
 from app.models import user as _user  # noqa: F401  (registers User on SQLModel.metadata)
@@ -29,6 +33,56 @@ TEST_DATABASE_URL = os.environ.get(
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
+
+
+def _assert_test_db_is_not_dev() -> None:
+    """Called before both migrating and dropping - either against the wrong
+    database would be irreversible, so this is checked at both call sites
+    rather than trusting the earlier check still holds.
+    """
+    dev_url = get_settings().DATABASE_URL
+    if TEST_DATABASE_URL == dev_url:
+        raise RuntimeError(
+            "TEST_DATABASE_URL matches the app's configured DATABASE_URL - "
+            "refusing to run migrations or drop a schema to avoid touching dev."
+        )
+
+
+async def _upgrade_test_db_to_head() -> None:
+    """alembic/env.py:27 unconditionally sets sqlalchemy.url from
+    app.config.get_settings().DATABASE_URL, ignoring alembic.ini and any
+    config.set_main_option() call made beforehand - so pointing migrations at
+    the test DB means overriding *that* source (env var + lru_cache), not the
+    Alembic Config object.
+    """
+    _assert_test_db_is_not_dev()
+    dev_url = get_settings().DATABASE_URL
+
+    os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+    get_settings.cache_clear()
+    try:
+        resolved = get_settings().DATABASE_URL
+        if resolved != TEST_DATABASE_URL or resolved == dev_url:
+            raise RuntimeError(
+                f"Refusing to run migrations: resolved DATABASE_URL {resolved!r} "
+                "does not look like the test database."
+            )
+
+        config = Config(str(_ALEMBIC_INI))
+        # env.py's run_migrations_online() calls asyncio.run(), which raises if
+        # invoked from inside pytest-asyncio's already-running session loop -
+        # to_thread gives Alembic a fresh thread with no event loop of its own.
+        await asyncio.to_thread(command.upgrade, config, "head")
+    finally:
+        if dev_url is not None:
+            os.environ["DATABASE_URL"] = dev_url
+        else:
+            os.environ.pop("DATABASE_URL", None)
+        get_settings.cache_clear()
+
 
 # One EC keypair for the whole test session. Its public half is served as a fake JWKS
 # (see _patch_jwks_fetch below), so app.deps's real ES256 + JWKS verification path
@@ -46,11 +100,15 @@ def _fake_jwks() -> dict[str, Any]:
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _create_tables() -> AsyncGenerator[None, None]:
-    async with test_engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    await _upgrade_test_db_to_head()
     yield
+    _assert_test_db_is_not_dev()
     async with test_engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
+        # metadata.drop_all wouldn't remove alembic_version (it isn't part of
+        # SQLModel.metadata), which would leave the next session believing the
+        # schema is already at head while the tables are gone.
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
     await test_engine.dispose()
 
 
@@ -58,7 +116,13 @@ async def _create_tables() -> AsyncGenerator[None, None]:
 async def _truncate_tables() -> AsyncGenerator[None, None]:
     yield
     async with test_engine.begin() as conn:
-        table_names = ", ".join(f'"{table.name}"' for table in SQLModel.metadata.sorted_tables)
+        result = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name != 'alembic_version'"
+            )
+        )
+        table_names = ", ".join(f'"{row[0]}"' for row in result)
         if table_names:
             await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
 
@@ -217,3 +281,19 @@ def make_plan() -> Callable[..., Any]:
         return response.json()
 
     return _make_plan
+
+
+@pytest.fixture
+def make_workout() -> Callable[..., Any]:
+    """Composable workout factory, mirroring make_plan: POSTs to the real
+    /plans/{plan_id}/workouts endpoint rather than inserting rows directly.
+    """
+
+    async def _make_workout(client: AsyncClient, plan_id: str, **overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {"name": "Test Workout", "notes": None}
+        payload.update(overrides)
+        response = await client.post(f"/plans/{plan_id}/workouts", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _make_workout
