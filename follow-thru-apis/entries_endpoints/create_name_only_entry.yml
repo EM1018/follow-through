@@ -1,0 +1,25 @@
+info:
+  name: create_name_only_entry
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: http://127.0.0.1:8000/plans/674c009a-93bf-46c8-b314-5cc1621fd4d8/schedule-entries
+  body:
+    type: json
+    data: |-
+      {
+        // create an entry without workout Id
+        "day_of_week": 2,
+        "name_override": "rest day"
+      }
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

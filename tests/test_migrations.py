@@ -27,12 +27,16 @@ async def test_migrations_match_models() -> None:
     """The migrated test schema (built by conftest's session-scoped fixture) must
     match SQLModel.metadata with no diff.
 
-    Blind spot: compare_metadata inherits autogenerate's name-based CHECK
-    comparison, so a CHECK constraint whose name is unchanged but whose
-    expression differs produces an empty diff here - it will NOT be caught by
-    this test. That case is covered instead by the fact that the suite now runs
-    against the migrated schema: a stale CHECK expression rejects the insert it
-    was supposed to reject, and the relevant feature test fails.
+    Blind spot, confirmed empirically (not just documented) by deliberately
+    deleting a CHECK constraint from a migration and rerunning this test: it
+    stayed green. compare_metadata does not reliably detect CHECK constraint
+    drift at all in this Alembic/SQLAlchemy combination - not just an
+    expression change under a matching name, but a constraint entirely absent
+    from the model's declared set. That case is covered instead by the fact
+    that the suite runs against the migrated schema: a missing or stale CHECK
+    lets an invalid insert through, and the relevant feature/constraint test
+    fails. See tests/test_constraints.py for the tests that actually exercise
+    each CHECK end to end, which is what makes this gap survivable.
     """
     async with test_engine.connect() as conn:
         diff = await conn.run_sync(

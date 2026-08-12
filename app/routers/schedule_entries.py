@@ -28,6 +28,21 @@ async def _get_plan_workout(
     return workout
 
 
+async def _get_plan_entry(
+    session: AsyncSession, plan_id: uuid.UUID, entry_id: uuid.UUID
+) -> ScheduleEntry:
+    """replaces_entry_id is a body field, not a path param - same reasoning as
+    _get_plan_workout: an entry from a different plan is treated identically
+    to one that doesn't exist.
+    """
+    entry = await session.get(ScheduleEntry, entry_id)
+    if entry is None or entry.plan_id != plan_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Schedule entry not found"
+        )
+    return entry
+
+
 async def _get_owned_entry(
     entry_id: uuid.UUID,
     plan: Plan = Depends(get_owned_plan),
@@ -47,7 +62,10 @@ async def create_entry(
     plan: Plan = Depends(get_owned_plan),
     session: AsyncSession = Depends(get_session),
 ) -> ScheduleEntry:
-    await _get_plan_workout(session, plan.id, body.workout_id)
+    if body.workout_id is not None:
+        await _get_plan_workout(session, plan.id, body.workout_id)
+    if body.replaces_entry_id is not None:
+        await _get_plan_entry(session, plan.id, body.replaces_entry_id)
 
     entry = ScheduleEntry(plan_id=plan.id, **body.model_dump())
     session.add(entry)
@@ -77,12 +95,44 @@ async def update_entry(
     session: AsyncSession = Depends(get_session),
 ) -> ScheduleEntry:
     updates = body.model_dump(exclude_unset=True)
+    entry_is_dated = entry.on_date is not None
+
+    # A PATCH may not change an entry's kind - delete and recreate to convert.
+    # These are checked against the entry's *current* kind, so e.g. day_of_week
+    # on an already-recurring entry (just changing the weekday) is unaffected.
+    if "day_of_week" in updates and entry_is_dated:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="day_of_week cannot be set on a dated entry",
+        )
+    if "on_date" in updates and not entry_is_dated:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="on_date cannot be set on a recurring entry",
+        )
+    if ("starts_on" in updates or "ends_on" in updates) and entry_is_dated:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="starts_on/ends_on cannot be set on a dated entry",
+        )
+    if "replaces_entry_id" in updates and not entry_is_dated:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="replaces_entry_id cannot be set on a recurring entry",
+        )
+    if updates.get("replaces_entry_id") == entry.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="an entry cannot replace itself",
+        )
 
     if updates.get("workout_id") is not None:
         await _get_plan_workout(session, plan.id, updates["workout_id"])
+    if updates.get("replaces_entry_id") is not None:
+        await _get_plan_entry(session, plan.id, updates["replaces_entry_id"])
 
     # validate against the *effective* result of this patch, since a partial
-    # update might only send one of starts_on/ends_on
+    # update might only send one of several related fields
     effective_starts_on = updates.get("starts_on", entry.starts_on)
     effective_ends_on = updates.get("ends_on", entry.ends_on)
     if (
@@ -93,6 +143,24 @@ async def update_entry(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="ends_on must be on or after starts_on",
+        )
+
+    effective_workout_id = updates.get("workout_id", entry.workout_id)
+    effective_name_override = updates.get("name_override", entry.name_override)
+    effective_replaces_entry_id = updates.get("replaces_entry_id", entry.replaces_entry_id)
+    if (
+        effective_workout_id is None
+        and effective_name_override is None
+        and effective_replaces_entry_id is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="at least one of workout_id, name_override, or replaces_entry_id is required",
+        )
+    if effective_workout_id is not None and effective_name_override is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="name_override cannot be set together with workout_id",
         )
 
     for field, value in updates.items():

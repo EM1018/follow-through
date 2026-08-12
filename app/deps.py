@@ -8,11 +8,13 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
+from sqlalchemy.dialects.postgresql import insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
 from app.models.plan import Plan
+from app.models.user import User
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -63,6 +65,7 @@ def _get_jwk_client() -> _HttpxPyJWKClient:
 # security guard
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    session: AsyncSession = Depends(get_session),
 ) -> CurrentUser:
     if credentials is None:
         raise _UNAUTHORIZED
@@ -90,6 +93,20 @@ async def get_current_user(
         user_id = UUID(sub)
     except ValueError as exc:
         raise _UNAUTHORIZED from exc
+
+    # Every authenticated request passes through here, which makes this the one
+    # place that can guarantee a users row exists before anything downstream
+    # assumes it does (plans.user_id's FK, most directly) - self-healing for
+    # accounts that predate this change, no client-side ordering requirement,
+    # and safe if a client dies between Supabase signup and its first request.
+    # ON CONFLICT DO NOTHING instead of check-then-insert: two concurrent first
+    # requests from the same brand-new user would otherwise race on the insert.
+    # A DB error here is left to propagate - a CurrentUser without a backing
+    # row would only fail confusingly one layer later.
+    await session.exec(
+        insert(User).values(id=user_id, email=email).on_conflict_do_nothing(index_elements=["id"])
+    )
+    await session.commit()
 
     return CurrentUser(user_id=user_id, email=email)
 
