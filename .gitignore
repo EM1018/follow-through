@@ -18,6 +18,7 @@ venv/
 .pytest_cache/
 .coverage
 .coverage 2
+.coverage 3
 htmlcov/
 coverage.xml
 
