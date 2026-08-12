@@ -35,8 +35,24 @@ export async function unwrap<T>(
   }
 
   const { data, error, response } = result;
-  if (error !== undefined || data === undefined) {
+  // 204 responses (e.g. DELETE) are ok with no body -- don't treat that as an error.
+  if (!response.ok) {
     throw classifyApiError(response.status, error);
   }
-  return data;
+  return data as T;
+}
+
+export function describeApiError(error: ApiError): string {
+  switch (error.kind) {
+    case 'unauthorized':
+      return 'You need to sign in again.';
+    case 'not_found':
+      return 'That no longer exists.';
+    case 'validation':
+      return error.detail.map((d) => d.msg).join('\n') || 'Invalid request.';
+    case 'server':
+      return `Server error (${error.status}).`;
+    case 'network':
+      return 'Network error -- check your connection and the API base URL.';
+  }
 }
