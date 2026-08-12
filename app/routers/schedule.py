@@ -13,7 +13,7 @@ from app.services.resolution import resolve
 
 router = APIRouter(prefix="/plans/{plan_id}/schedule", tags=["schedule"])
 
-_MAX_WINDOW_DAYS = 92 # longest-possible three consecutive months
+_MAX_WINDOW_DAYS = 92  # longest possible three consecutive months (31 + 30 + 31)
 
 
 @router.get("")
@@ -48,13 +48,21 @@ async def get_schedule(
     while current <= to:
         day_entries = []
         for entry in resolve(entries, current):
-            workout = workouts_by_id.get(entry.workout_id)
+            if entry.workout_id is not None:
+                workout = workouts_by_id.get(entry.workout_id)
+                name = workout.name if workout else None
+                notes = workout.notes if workout else None
+            else:
+                # name-only entry - no fallback chain needed, since
+                # name_override and workout_id are mutually exclusive here.
+                name = entry.name_override
+                notes = None
             day_entries.append(
                 {
                     "entry_id": str(entry.id),
-                    "workout_id": str(entry.workout_id),
-                    "name": workout.name if workout else None,
-                    "notes": workout.notes if workout else None,
+                    "workout_id": str(entry.workout_id) if entry.workout_id is not None else None,
+                    "name": name,
+                    "notes": notes,
                 }
             )
         days[current.isoformat()] = day_entries

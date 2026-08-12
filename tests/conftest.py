@@ -297,3 +297,21 @@ def make_workout() -> Callable[..., Any]:
         return response.json()
 
     return _make_workout
+
+
+@pytest.fixture
+def make_entry() -> Callable[..., Any]:
+    """Composable schedule-entry factory, mirroring make_workout: POSTs to the
+    real /plans/{plan_id}/schedule-entries endpoint. Defaults to a Monday
+    recurring entry - pass on_date=... to build a dated entry instead (the
+    default day_of_week is dropped automatically so the two don't collide).
+    """
+
+    async def _make_entry(client: AsyncClient, plan_id: str, **overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {} if "on_date" in overrides else {"day_of_week": 1}
+        payload.update(overrides)
+        response = await client.post(f"/plans/{plan_id}/schedule-entries", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _make_entry
