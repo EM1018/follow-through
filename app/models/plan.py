@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Column, DateTime, Index, func, text
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, func, text
 from sqlmodel import Field, SQLModel
 
 
@@ -15,6 +15,11 @@ class Plan(SQLModel, table=True):
             "user_id",
             unique=True,
             postgresql_where=text("is_active"),
+        ),
+        # backstop for the same rule PlanCreate/PlanUpdate enforce in Pydantic -
+        # ScheduleEntry already has this exact backstop, Plan never did
+        CheckConstraint(
+            "ends_on IS NULL OR ends_on >= starts_on", name="ck_plans_ends_after_starts"
         ),
     )
 
