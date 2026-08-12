@@ -17,6 +17,7 @@ venv/
 # Testing / coverage
 .pytest_cache/
 .coverage
+.coverage 2
 htmlcov/
 coverage.xml
 
@@ -29,3 +30,10 @@ coverage.xml
 
 # macOS
 .DS_Store
+
+# Expo mobile app
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.env
+mobile/expo-env.d.ts
