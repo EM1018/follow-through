@@ -29,3 +29,9 @@ coverage.xml
 
 # macOS
 .DS_Store
+
+# Expo mobile app
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.env
