@@ -161,6 +161,13 @@ async def _create_user_row(current_user: CurrentUser) -> None:
     """Fast-path fixtures fabricate a CurrentUser without a real login, but any table
     with a real FK to users.id (plans, workouts, ...) needs that row to actually
     exist. Without this, inserts fail with a ForeignKeyViolationError.
+
+    This still exists even though app.deps.get_current_user now provisions the
+    row itself, because authed_client overrides get_current_user entirely -
+    the real dependency (and its provisioning) never runs for fast-path tests.
+    The real provisioning path is covered end-to-end in
+    tests/test_user_provisioning.py, which uses the plain client fixture and
+    real JWTs specifically so get_current_user's own logic is what's tested.
     """
     async with test_session_maker() as db_session:
         db_session.add(User(id=current_user.user_id, email=current_user.email))
