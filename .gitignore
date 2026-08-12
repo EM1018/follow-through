@@ -36,3 +36,4 @@ mobile/node_modules/
 mobile/.expo/
 mobile/dist/
 mobile/.env
+mobile/expo-env.d.ts
