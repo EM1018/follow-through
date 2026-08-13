@@ -1,6 +1,81 @@
 {
   "components": {
     "schemas": {
+      "DayScheduleRead": {
+        "description": "No `date` field - the date is already the key this value sits under in\nScheduleResponse.days, so it isn't duplicated here.",
+        "properties": {
+          "cancelled": {
+            "items": {
+              "$ref": "#/components/schemas/EntryRefRead"
+            },
+            "title": "Cancelled",
+            "type": "array"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedEntryRead"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DayStatus"
+          }
+        },
+        "required": [
+          "status",
+          "entries",
+          "cancelled"
+        ],
+        "title": "DayScheduleRead",
+        "type": "object"
+      },
+      "DayStatus": {
+        "description": "Day-level status is a presentation convenience for compact rendering\n(e.g. a single calendar-cell badge) - `entries` and `cancelled` are the\nauthoritative data. Clients must not branch on this status alone in a\ndetailed view: a SCHEDULED day can still carry unrelated cancelled\nentries (see resolve()'s mixed-day precedence), and SUBSTITUTED only\nmeans *at least one* surviving entry that day is a substitution.\n\nThese string values are part of the public wire contract - app/schemas/\nimports this enum directly for the API response, so renaming a member\nhere changes the API, not just an internal detail.",
+        "enum": [
+          "empty",
+          "scheduled",
+          "cancelled",
+          "substituted"
+        ],
+        "title": "DayStatus",
+        "type": "string"
+      },
+      "EntryRefRead": {
+        "description": "Minimal reference to another entry - used both for what a substitution\nreplaced and what a cancellation cancelled, since both need exactly the\nsame information: which entry, and what to call it. Never None.entry_id;\nthe whole reference is Optional at the call site instead, for the cases\nwhere there is nothing to reference at all.",
+        "properties": {
+          "entry_id": {
+            "format": "uuid",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "entry_id",
+          "name"
+        ],
+        "title": "EntryRefRead",
+        "type": "object"
+      },
+      "EntryStatus": {
+        "enum": [
+          "scheduled",
+          "substituted"
+        ],
+        "title": "EntryStatus",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -182,6 +257,72 @@
           }
         },
         "title": "PlanUpdate",
+        "type": "object"
+      },
+      "ResolvedEntryRead": {
+        "properties": {
+          "entry_id": {
+            "format": "uuid",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "replaced": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntryRefRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/EntryStatus"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": [
+          "entry_id",
+          "workout_id",
+          "name",
+          "notes",
+          "status",
+          "replaced"
+        ],
+        "title": "ResolvedEntryRead",
         "type": "object"
       },
       "ScheduleEntryCreate": {
@@ -483,6 +624,22 @@
           }
         },
         "title": "ScheduleEntryUpdate",
+        "type": "object"
+      },
+      "ScheduleResponse": {
+        "properties": {
+          "days": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DayScheduleRead"
+            },
+            "title": "Days",
+            "type": "object"
+          }
+        },
+        "required": [
+          "days"
+        ],
+        "title": "ScheduleResponse",
         "type": "object"
       },
       "User": {
@@ -981,27 +1138,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "additionalProperties": {
-                      "items": {
-                        "additionalProperties": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "type": "object"
-                      },
-                      "type": "array"
-                    },
-                    "type": "object"
-                  },
-                  "title": "Response Get Schedule Plans  Plan Id  Schedule Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ScheduleResponse"
                 }
               }
             },

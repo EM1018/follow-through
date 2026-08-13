@@ -21,6 +21,7 @@ venv/
 .coverage 3
 htmlcov/
 coverage.xml
+.coverage *
 
 # Ruff
 .ruff_cache/
