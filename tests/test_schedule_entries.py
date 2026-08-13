@@ -415,24 +415,27 @@ async def test_schedule_shape_mwf_one_week_window(
     expected_dates = {f"2026-08-{day:02d}" for day in range(10, 17)}
     assert set(days.keys()) == expected_dates
 
-    assert len(days["2026-08-10"]) == 1  # Mon
-    assert days["2026-08-10"][0]["name"] == "Push"
-    assert days["2026-08-10"][0]["notes"] == "chest/shoulders"
+    assert days["2026-08-10"]["status"] == "scheduled"  # Mon
+    assert len(days["2026-08-10"]["entries"]) == 1
+    assert days["2026-08-10"]["entries"][0]["name"] == "Push"
+    assert days["2026-08-10"]["entries"][0]["notes"] == "chest/shoulders"
+    assert days["2026-08-10"]["entries"][0]["status"] == "scheduled"
 
-    assert days["2026-08-11"] == []  # Tue
+    assert days["2026-08-11"]["status"] == "empty"  # Tue
+    assert days["2026-08-11"]["entries"] == []
 
-    assert len(days["2026-08-12"]) == 1  # Wed
-    assert days["2026-08-12"][0]["name"] == "Pull"
-    assert days["2026-08-12"][0]["notes"] == "back/biceps"
+    assert len(days["2026-08-12"]["entries"]) == 1  # Wed
+    assert days["2026-08-12"]["entries"][0]["name"] == "Pull"
+    assert days["2026-08-12"]["entries"][0]["notes"] == "back/biceps"
 
-    assert days["2026-08-13"] == []  # Thu
+    assert days["2026-08-13"]["entries"] == []  # Thu
 
-    assert len(days["2026-08-14"]) == 1  # Fri
-    assert days["2026-08-14"][0]["name"] == "Legs"
-    assert days["2026-08-14"][0]["notes"] is None
+    assert len(days["2026-08-14"]["entries"]) == 1  # Fri
+    assert days["2026-08-14"]["entries"][0]["name"] == "Legs"
+    assert days["2026-08-14"]["entries"][0]["notes"] is None
 
-    assert days["2026-08-15"] == []  # Sat
-    assert days["2026-08-16"] == []  # Sun
+    assert days["2026-08-15"]["entries"] == []  # Sat
+    assert days["2026-08-16"]["entries"] == []  # Sun
 
 
 # H. inactive plan
@@ -461,7 +464,7 @@ async def test_schedule_works_on_inactive_plan(
     )
 
     assert response.status_code == 200
-    assert len(response.json()["days"]["2026-08-10"]) == 1
+    assert len(response.json()["days"]["2026-08-10"]["entries"]) == 1
 
 
 # I. ownership + auth on the schedule endpoint
@@ -776,9 +779,25 @@ async def test_cancellation_empties_one_monday_others_unaffected(
     assert response.status_code == 200
     days = response.json()["days"]
 
-    assert days["2026-08-03"] != []  # Monday before, unaffected
-    assert days["2026-08-10"] == []  # the cancelled Monday
-    assert days["2026-08-17"] != []  # Monday after, unaffected
+    assert days["2026-08-03"]["status"] == "scheduled"  # Monday before, unaffected
+    assert days["2026-08-03"]["entries"] != []
+
+    # the cancelled Monday: entries is empty, same as a day with nothing
+    # scheduled - but status distinguishes the two, which is the entire
+    # regression this task exists to close.
+    assert days["2026-08-10"]["entries"] == []
+    assert days["2026-08-10"]["status"] == "cancelled"
+    assert days["2026-08-10"]["cancelled"] == [{"entry_id": recurring["id"], "name": "Push"}]
+
+    # a day with genuinely nothing scheduled (no entry, no cancellation) must
+    # report a *different* status than the cancelled Monday above
+    assert days["2026-08-04"]["entries"] == []
+    assert days["2026-08-04"]["status"] == "empty"
+    assert days["2026-08-04"]["cancelled"] == []
+    assert days["2026-08-04"]["status"] != days["2026-08-10"]["status"]
+
+    assert days["2026-08-17"]["status"] == "scheduled"  # Monday after, unaffected
+    assert days["2026-08-17"]["entries"] != []
 
 
 # R. the substitution test
@@ -811,14 +830,25 @@ async def test_substitution_replaces_one_monday_others_show_original(
     assert response.status_code == 200
     days = response.json()["days"]
 
-    assert len(days["2026-08-03"]) == 1
-    assert days["2026-08-03"][0]["name"] == "Push"
+    # ordinary day: not reported as substituted just because a substitution
+    # exists elsewhere in the plan
+    assert days["2026-08-03"]["status"] == "scheduled"
+    assert len(days["2026-08-03"]["entries"]) == 1
+    assert days["2026-08-03"]["entries"][0]["name"] == "Push"
+    assert days["2026-08-03"]["entries"][0]["status"] == "scheduled"
+    assert days["2026-08-03"]["entries"][0]["replaced"] is None
 
-    assert len(days["2026-08-10"]) == 1
-    assert days["2026-08-10"][0]["name"] == "Yoga"
+    assert days["2026-08-10"]["status"] == "substituted"
+    assert len(days["2026-08-10"]["entries"]) == 1
+    substituted_entry = days["2026-08-10"]["entries"][0]
+    assert substituted_entry["name"] == "Yoga"
+    assert substituted_entry["status"] == "substituted"
+    assert substituted_entry["replaced"] == {"entry_id": recurring["id"], "name": "Push"}
 
-    assert len(days["2026-08-17"]) == 1
-    assert days["2026-08-17"][0]["name"] == "Push"
+    assert days["2026-08-17"]["status"] == "scheduled"
+    assert len(days["2026-08-17"]["entries"]) == 1
+    assert days["2026-08-17"]["entries"][0]["name"] == "Push"
+    assert days["2026-08-17"]["entries"][0]["status"] == "scheduled"
 
 
 # S. PATCH kind-lock
@@ -885,8 +915,8 @@ async def test_patch_on_date_on_dated_entry_moves_the_schedule(
         f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-11"}
     )
     days = schedule.json()["days"]
-    assert days["2026-08-10"] == []
-    assert len(days["2026-08-11"]) == 1
+    assert days["2026-08-10"]["entries"] == []
+    assert len(days["2026-08-11"]["entries"]) == 1
 
 
 # T. PATCH clearing
@@ -966,13 +996,25 @@ async def test_schedule_shape_name_only_entry(
         f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-10"}
     )
     assert response.status_code == 200
-    entries = response.json()["days"]["2026-08-10"]
+    day = response.json()["days"]["2026-08-10"]
+    assert set(day.keys()) == {"status", "entries", "cancelled"}
+    assert day["status"] == "scheduled"
 
+    entries = day["entries"]
     assert len(entries) == 1
     entry = entries[0]
-    assert set(entry.keys()) == {"entry_id", "workout_id", "name", "notes"}
+    assert set(entry.keys()) == {
+        "entry_id",
+        "workout_id",
+        "name",
+        "notes",
+        "status",
+        "replaced",
+    }
     assert entry["workout_id"] is None
     assert entry["name"] == "Recovery walk"
+    assert entry["status"] == "scheduled"
+    assert entry["replaced"] is None
     assert entry["notes"] is None
 
 
@@ -1245,3 +1287,95 @@ async def test_patch_body_with_name_override_and_workout_id_together_is_422(
     )
 
     assert response.status_code == 422
+
+
+# Y. Commit B: mixed day and name-only entries in each applicable state
+
+
+@pytest.mark.asyncio
+async def test_mixed_day_scheduled_and_cancelled_reports_scheduled(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    """Endpoint-level check of the approved mixed-day rule: a real,
+    unmodified entry outranks an unrelated cancellation on the same day. The
+    cancelled entry is still fully reported via `cancelled` - only the
+    day-level headline status is affected.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    unrelated_workout = await make_workout(client, plan["id"], name="Push")
+    cancelled_workout = await make_workout(client, plan["id"], name="Pull")
+    await make_entry(client, plan["id"], workout_id=unrelated_workout["id"], day_of_week=1)
+    cancelled_target = await make_entry(
+        client, plan["id"], workout_id=cancelled_workout["id"], day_of_week=1
+    )
+    await make_entry(
+        client, plan["id"], on_date="2026-08-10", replaces_entry_id=cancelled_target["id"]
+    )
+
+    response = await client.get(
+        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-10"}
+    )
+    assert response.status_code == 200
+    day = response.json()["days"]["2026-08-10"]
+
+    assert day["status"] == "scheduled"
+    assert [e["name"] for e in day["entries"]] == ["Push"]
+    assert day["cancelled"] == [{"entry_id": cancelled_target["id"], "name": "Pull"}]
+
+
+@pytest.mark.asyncio
+async def test_name_only_entry_as_cancellation_target_names_correctly(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_entry: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    rest_day = await make_entry(client, plan["id"], name_override="Rest", day_of_week=1)
+    await make_entry(client, plan["id"], on_date="2026-08-10", replaces_entry_id=rest_day["id"])
+
+    response = await client.get(
+        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-10"}
+    )
+    assert response.status_code == 200
+    day = response.json()["days"]["2026-08-10"]
+
+    assert day["status"] == "cancelled"
+    assert day["entries"] == []
+    assert day["cancelled"] == [{"entry_id": rest_day["id"], "name": "Rest"}]
+
+
+@pytest.mark.asyncio
+async def test_name_only_entry_as_replacement_reports_its_own_name(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"], name="Push")
+    recurring = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
+    await make_entry(
+        client,
+        plan["id"],
+        name_override="Active recovery",
+        on_date="2026-08-10",
+        replaces_entry_id=recurring["id"],
+    )
+
+    response = await client.get(
+        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-10"}
+    )
+    assert response.status_code == 200
+    day = response.json()["days"]["2026-08-10"]
+
+    assert day["status"] == "substituted"
+    assert len(day["entries"]) == 1
+    entry = day["entries"][0]
+    assert entry["workout_id"] is None
+    assert entry["name"] == "Active recovery"
+    assert entry["status"] == "substituted"
+    assert entry["replaced"] == {"entry_id": recurring["id"], "name": "Push"}
