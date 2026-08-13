@@ -168,6 +168,55 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * DayScheduleRead
+         * @description No `date` field - the date is already the key this value sits under in
+         *     ScheduleResponse.days, so it isn't duplicated here.
+         */
+        DayScheduleRead: {
+            /** Cancelled */
+            cancelled: components["schemas"]["EntryRefRead"][];
+            /** Entries */
+            entries: components["schemas"]["ResolvedEntryRead"][];
+            status: components["schemas"]["DayStatus"];
+        };
+        /**
+         * DayStatus
+         * @description Day-level status is a presentation convenience for compact rendering
+         *     (e.g. a single calendar-cell badge) - `entries` and `cancelled` are the
+         *     authoritative data. Clients must not branch on this status alone in a
+         *     detailed view: a SCHEDULED day can still carry unrelated cancelled
+         *     entries (see resolve()'s mixed-day precedence), and SUBSTITUTED only
+         *     means *at least one* surviving entry that day is a substitution.
+         *
+         *     These string values are part of the public wire contract - app/schemas/
+         *     imports this enum directly for the API response, so renaming a member
+         *     here changes the API, not just an internal detail.
+         * @enum {string}
+         */
+        DayStatus: "empty" | "scheduled" | "cancelled" | "substituted";
+        /**
+         * EntryRefRead
+         * @description Minimal reference to another entry - used both for what a substitution
+         *     replaced and what a cancellation cancelled, since both need exactly the
+         *     same information: which entry, and what to call it. Never None.entry_id;
+         *     the whole reference is Optional at the call site instead, for the cases
+         *     where there is nothing to reference at all.
+         */
+        EntryRefRead: {
+            /**
+             * Entry Id
+             * Format: uuid
+             */
+            entry_id: string;
+            /** Name */
+            name: string | null;
+        };
+        /**
+         * EntryStatus
+         * @enum {string}
+         */
+        EntryStatus: "scheduled" | "substituted";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -239,6 +288,22 @@ export interface components {
             /** Visible To Friends */
             visible_to_friends?: boolean | null;
         };
+        /** ResolvedEntryRead */
+        ResolvedEntryRead: {
+            /**
+             * Entry Id
+             * Format: uuid
+             */
+            entry_id: string;
+            /** Name */
+            name: string | null;
+            /** Notes */
+            notes: string | null;
+            replaced: components["schemas"]["EntryRefRead"] | null;
+            status: components["schemas"]["EntryStatus"];
+            /** Workout Id */
+            workout_id: string | null;
+        };
         /** ScheduleEntryCreate */
         ScheduleEntryCreate: {
             /** Day Of Week */
@@ -304,6 +369,13 @@ export interface components {
             starts_on?: string | null;
             /** Workout Id */
             workout_id?: string | null;
+        };
+        /** ScheduleResponse */
+        ScheduleResponse: {
+            /** Days */
+            days: {
+                [key: string]: components["schemas"]["DayScheduleRead"];
+            };
         };
         /** User */
         User: {
@@ -590,13 +662,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: {
-                            [key: string]: {
-                                [key: string]: string | null;
-                            }[];
-                        };
-                    };
+                    "application/json": components["schemas"]["ScheduleResponse"];
                 };
             };
             /** @description Validation Error */
