@@ -44,3 +44,9 @@ export const fontWeight = {
   semibold: '600',
   bold: '700',
 } as const;
+
+/** Small decorative dot diameters -- page indicators, month-cell status marks. */
+export const dotSize = {
+  sm: 5,
+  md: 6,
+} as const;

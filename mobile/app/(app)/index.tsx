@@ -15,13 +15,34 @@ import {
 } from 'react-native';
 
 import { api } from '@/api/client';
-import { describeApiError, unwrap, type ApiError } from '@/api/errors';
+import { unwrap, type ApiError } from '@/api/errors';
 import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
 import { PageDots } from '@/components/PageDots';
 import { Screen } from '@/components/Screen';
 import { buildPlanStack, type PlanRead, type PlanStackItem } from '@/features/home/planStack';
-import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
+import { DayView } from '@/features/schedule/DayView';
+import { MonthView } from '@/features/schedule/MonthView';
+import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
+import { ViewModeControl } from '@/features/schedule/ViewModeControl';
+import { useViewMode, type ViewMode } from '@/features/schedule/viewMode';
+import { WeekView } from '@/features/schedule/WeekView';
+import { parseDateOnly } from '@/lib/dates';
+import { supabase } from '@/lib/supabase';
+import { colors, fontSize, fontWeight, spacing } from '@/theme';
+
+function TopBar() {
+  return (
+    <View style={styles.topBar}>
+      <TouchableOpacity onPress={() => router.push('/(app)/plans')} accessibilityRole="button">
+        <Text style={styles.topBarLink}>Manage plans</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={() => supabase.auth.signOut()} accessibilityRole="button">
+        <Text style={styles.topBarLink}>Sign out</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
 
 function CreatePlanCard() {
   return (
@@ -40,7 +61,89 @@ function CreatePlanCard() {
   );
 }
 
-function PlanPage({ plan }: { plan: PlanRead }) {
+function CalendarArea({
+  planId,
+  planStartsOn,
+  today,
+  viewMode,
+  onViewModeChange,
+}: {
+  planId: string;
+  planStartsOn: Date;
+  today: Date;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+}) {
+  const [width, setWidth] = useState(0);
+  const [focusedDate, setFocusedDate] = useState(today);
+
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const measured = event.nativeEvent.layout.width;
+      if (measured > 0 && measured !== width) {
+        setWidth(measured);
+      }
+    },
+    [width],
+  );
+
+  const onSelectDateFromMonth = useCallback(
+    (date: Date) => {
+      setFocusedDate(date);
+      onViewModeChange('day');
+    },
+    [onViewModeChange],
+  );
+
+  return (
+    <View style={styles.calendarArea} onLayout={onLayout}>
+      {width > 0 && viewMode === 'day' ? (
+        <DayView
+          planId={planId}
+          today={today}
+          focusedDate={focusedDate}
+          onFocusedDateChange={setFocusedDate}
+          planStartsOn={planStartsOn}
+          width={width}
+        />
+      ) : null}
+      {width > 0 && viewMode === 'week' ? (
+        <WeekView
+          planId={planId}
+          today={today}
+          focusedDate={focusedDate}
+          onFocusedDateChange={setFocusedDate}
+          planStartsOn={planStartsOn}
+          width={width}
+        />
+      ) : null}
+      {width > 0 && viewMode === 'month' ? (
+        <MonthView
+          planId={planId}
+          today={today}
+          focusedDate={focusedDate}
+          planStartsOn={planStartsOn}
+          onSelectDate={onSelectDateFromMonth}
+          width={width}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function PlanPage({
+  plan,
+  today,
+  viewMode,
+  onViewModeChange,
+}: {
+  plan: PlanRead;
+  today: Date;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+}) {
+  const planStartsOn = useMemo(() => parseDateOnly(plan.starts_on), [plan.starts_on]);
+
   return (
     <View style={styles.page}>
       <View style={styles.header}>
@@ -50,17 +153,16 @@ function PlanPage({ plan }: { plan: PlanRead }) {
           </Text>
           {plan.is_active ? <Badge label="Active" variant="success" /> : null}
         </View>
-        {/* Inert this stage -- becomes the Month/Week/Day switcher in Stage 5. */}
-        <View style={styles.viewModeStub}>
-          <Text style={styles.viewModeStubText}>Month</Text>
-        </View>
+        <ViewModeControl value={viewMode} onChange={onViewModeChange} />
       </View>
 
-      <Card style={styles.calendarStub}>
-        <Text style={styles.calendarStubText}>
-          {plan.starts_on} – {plan.ends_on ?? 'Ongoing'}
-        </Text>
-      </Card>
+      <CalendarArea
+        planId={plan.id}
+        planStartsOn={planStartsOn}
+        today={today}
+        viewMode={viewMode}
+        onViewModeChange={onViewModeChange}
+      />
     </View>
   );
 }
@@ -76,6 +178,7 @@ function CreatePage() {
 export default function HomeScreen() {
   const [pageHeight, setPageHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
+  const { viewMode, setViewMode } = useViewMode();
 
   const plansQuery = useQuery<PlanRead[], ApiError>({
     queryKey: ['plans'],
@@ -121,20 +224,30 @@ export default function HomeScreen() {
   const renderItem = useCallback(
     ({ item }: { item: PlanStackItem }) => (
       <View style={{ height: pageHeight }}>
-        {item.kind === 'plan' ? <PlanPage plan={item.plan} /> : <CreatePage />}
+        {item.kind === 'plan' ? (
+          <PlanPage plan={item.plan} today={today} viewMode={viewMode} onViewModeChange={setViewMode} />
+        ) : (
+          <CreatePage />
+        )}
       </View>
     ),
-    [pageHeight],
+    [pageHeight, today, viewMode, setViewMode],
   );
 
   return (
     <Screen style={styles.screen}>
+      <TopBar />
       <View style={styles.container} onLayout={onContainerLayout}>
-        {plansQuery.isLoading ? <ActivityIndicator style={styles.centered} color={colors.accent} /> : null}
+        {/* Loading/error only cover the whole screen on a genuinely empty cache --
+            once plan data has ever loaded, it stays on screen (stale-while-error)
+            rather than getting replaced by a background refetch failure. */}
+        {plansQuery.isLoading && !plansQuery.data ? (
+          <ActivityIndicator style={styles.centered} color={colors.accent} />
+        ) : null}
 
-        {plansQuery.isError ? (
+        {plansQuery.isError && !plansQuery.data ? (
           <View style={styles.centered}>
-            <Text style={styles.errorText}>{describeApiError(plansQuery.error)}</Text>
+            <ScheduleErrorState error={plansQuery.error} onRetry={plansQuery.refetch} />
           </View>
         ) : null}
 
@@ -168,6 +281,20 @@ const styles = StyleSheet.create({
   screen: {
     paddingHorizontal: 0,
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  topBarLink: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.accent,
+  },
   container: {
     flex: 1,
   },
@@ -176,11 +303,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
-  },
-  errorText: {
-    fontSize: fontSize.md,
-    color: colors.danger,
-    textAlign: 'center',
   },
   page: {
     flex: 1,
@@ -194,6 +316,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
+    zIndex: 10,
   },
   headerLeft: {
     flex: 1,
@@ -208,27 +331,8 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.bold,
     color: colors.text,
   },
-  viewModeStub: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-  },
-  viewModeStubText: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.medium,
-    color: colors.textMuted,
-  },
-  calendarStub: {
+  calendarArea: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceMuted,
-  },
-  calendarStubText: {
-    fontSize: fontSize.md,
-    color: colors.textMuted,
   },
   createPage: {
     flex: 1,

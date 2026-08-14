@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
-import { colors, spacing } from '@/theme';
+import { colors, dotSize, spacing } from '@/theme';
 
 type PageDotsProps = {
   count: number;
@@ -32,9 +32,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
+    width: dotSize.sm,
+    height: dotSize.sm,
+    borderRadius: dotSize.sm / 2,
     backgroundColor: colors.border,
   },
   dotActive: {
