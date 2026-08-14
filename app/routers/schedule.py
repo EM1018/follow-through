@@ -10,7 +10,7 @@ from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
 from app.schemas.schedule import ScheduleResponse
-from app.services.resolution import resolve
+from app.services.resolution import DayResolution, DayStatus, date_within_plan_window, resolve
 
 router = APIRouter(prefix="/plans/{plan_id}/schedule", tags=["schedule"])
 
@@ -66,7 +66,13 @@ async def get_schedule(
     days: dict[str, dict] = {}
     current = from_
     while current <= to:
-        day = resolve(entries, current)
+        # Dates outside the plan's own window resolve to empty regardless of
+        # what any entry says - resolve() never sees the plan and never learns
+        # a date was out of range, it just isn't asked about those dates.
+        if date_within_plan_window(current, plan.starts_on, plan.ends_on):
+            day = resolve(entries, current)
+        else:
+            day = DayResolution(status=DayStatus.EMPTY, entries=[], cancelled=[])
 
         entries_read = []
         for resolved in day.entries:
