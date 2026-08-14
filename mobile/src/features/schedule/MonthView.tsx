@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { differenceInCalendarMonths, format, isBefore, isToday } from 'date-fns';
+import { differenceInCalendarMonths, format, isToday } from 'date-fns';
 import { useCallback, useEffect, useMemo } from 'react';
 import {
   FlatList,
@@ -15,6 +15,7 @@ import { colors, dotSize, fontSize, fontWeight, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
 import { MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, type MonthCell } from './month';
+import { planWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -39,20 +40,20 @@ function MonthDayCell({
   cell,
   day,
   isLoading,
-  isBeforeStart,
+  isOutOfWindow,
   onPress,
 }: {
   cell: MonthCell;
   day: DaySchedule | undefined;
   isLoading: boolean;
-  isBeforeStart: boolean;
+  isOutOfWindow: boolean;
   onPress: (date: Date) => void;
 }) {
   const today = isToday(cell.date);
 
   return (
     <TouchableOpacity
-      style={[styles.cell, isBeforeStart && styles.cellBeforeStart]}
+      style={[styles.cell, isOutOfWindow && styles.cellOutOfWindow]}
       onPress={() => onPress(cell.date)}
       accessibilityRole="button"
       accessibilityLabel={format(cell.date, 'EEEE, MMMM d')}
@@ -71,11 +72,13 @@ function MonthPage({
   planId,
   monthStart,
   planStartsOn,
+  planEndsOn,
   onSelectDate,
 }: {
   planId: string;
   monthStart: Date;
   planStartsOn: Date;
+  planEndsOn: Date | null;
   onSelectDate: (date: Date) => void;
 }) {
   const grid = useMemo(() => monthGrid(monthStart), [monthStart]);
@@ -112,7 +115,7 @@ function MonthPage({
                   cell={cell}
                   day={scheduleQuery.data?.days[dateParam]}
                   isLoading={scheduleQuery.isLoading}
-                  isBeforeStart={isBefore(cell.date, planStartsOn)}
+                  isOutOfWindow={planWindowState(cell.date, planStartsOn, planEndsOn) !== 'within'}
                   onPress={onSelectDate}
                 />
               );
@@ -131,6 +134,7 @@ export function MonthView({
   today,
   focusedDate,
   planStartsOn,
+  planEndsOn,
   onSelectDate,
   width,
 }: {
@@ -138,6 +142,7 @@ export function MonthView({
   today: Date;
   focusedDate: Date;
   planStartsOn: Date;
+  planEndsOn: Date | null;
   onSelectDate: (date: Date) => void;
   width: number;
 }) {
@@ -198,11 +203,12 @@ export function MonthView({
           planId={planId}
           monthStart={monthStartFor(today, offset)}
           planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
           onSelectDate={onSelectDate}
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, onSelectDate],
+    [planId, today, width, planStartsOn, planEndsOn, onSelectDate],
   );
 
   return (
@@ -258,7 +264,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xs,
     gap: spacing.xs,
   },
-  cellBeforeStart: {
+  cellOutOfWindow: {
     backgroundColor: colors.surfaceMuted,
   },
   cellDate: {

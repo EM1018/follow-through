@@ -17,7 +17,16 @@ export function classifyApiError(status: number, body: unknown): ApiError {
     return { kind: 'not_found' };
   }
   if (status === 422) {
-    const detail = (body as components['schemas']['HTTPValidationError'] | undefined)?.detail ?? [];
+    // FastAPI's 422s come in two shapes: pydantic validation failures give
+    // `detail` as a list of ValidationError objects, but a manually raised
+    // `HTTPException(422, detail="...")` (e.g. the plan-window checks) gives
+    // a plain string. Normalize both into the same list shape.
+    const rawDetail = (body as { detail?: unknown } | undefined)?.detail;
+    const detail: ValidationErrorDetail[] = Array.isArray(rawDetail)
+      ? rawDetail
+      : typeof rawDetail === 'string'
+        ? [{ loc: [], msg: rawDetail, type: 'value_error' }]
+        : [];
     return { kind: 'validation', detail };
   }
   return { kind: 'server', status };

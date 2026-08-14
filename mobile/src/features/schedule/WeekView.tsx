@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { addDays, differenceInCalendarWeeks, format, isBefore, isToday } from 'date-fns';
+import { addDays, differenceInCalendarWeeks, format, isToday } from 'date-fns';
 import { useCallback, useEffect, useMemo } from 'react';
 import {
   FlatList,
@@ -7,6 +7,7 @@ import {
   type NativeSyntheticEvent,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 
@@ -14,6 +15,7 @@ import { Skeleton } from '@/components/Skeleton';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
+import { planWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 import { WEEK_OFFSETS, WEEK_WINDOW, weekDates, weekStartFor } from './week';
 
@@ -23,34 +25,54 @@ function WeekCell({
   date,
   day,
   isLoading,
-  isBeforeStart,
+  planStartsOn,
+  planEndsOn,
+  onRequestAdd,
 }: {
   date: Date;
   day: DaySchedule | undefined;
   isLoading: boolean;
-  isBeforeStart: boolean;
+  planStartsOn: Date;
+  planEndsOn: Date | null;
+  onRequestAdd: (date: Date) => void;
 }) {
   const today = isToday(date);
-  const primary = day?.entries[0];
-  const cancelled = day?.cancelled[0];
+  const isOutOfWindow = planWindowState(date, planStartsOn, planEndsOn) !== 'within';
 
   return (
-    <View style={[styles.cell, today && styles.cellToday, isBeforeStart && styles.cellBeforeStart]}>
+    <View style={[styles.cell, today && styles.cellToday, isOutOfWindow && styles.cellOutOfWindow]}>
       <Text style={[styles.cellDate, today && styles.cellDateToday]}>{format(date, 'd')}</Text>
       {isLoading ? (
         <Skeleton style={styles.cellSkeleton} />
-      ) : isBeforeStart ? null : primary ? (
-        <Text
-          style={primary.status === 'substituted' ? styles.cellNameSubstituted : styles.cellNameScheduled}
-          numberOfLines={2}
+      ) : isOutOfWindow ? null : (
+        <View style={styles.cellEntries}>
+          {(day?.entries ?? []).map((entry) => (
+            <Text
+              key={entry.entry_id}
+              style={entry.status === 'substituted' ? styles.cellNameSubstituted : styles.cellNameScheduled}
+              numberOfLines={2}
+            >
+              {entry.status === 'substituted' ? `⇄ ${entry.name ?? 'Untitled'}` : (entry.name ?? 'Untitled')}
+            </Text>
+          ))}
+          {(day?.cancelled ?? []).map((target) => (
+            <Text key={target.entry_id} style={styles.cellNameCancelled} numberOfLines={2}>
+              {target.name ?? 'Untitled'}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {isOutOfWindow ? null : (
+        <TouchableOpacity
+          style={styles.cellAddButton}
+          onPress={() => onRequestAdd(date)}
+          accessibilityRole="button"
+          accessibilityLabel="Add workout"
         >
-          {primary.status === 'substituted' ? `⇄ ${primary.name ?? 'Untitled'}` : (primary.name ?? 'Untitled')}
-        </Text>
-      ) : cancelled ? (
-        <Text style={styles.cellNameCancelled} numberOfLines={2}>
-          {cancelled.name ?? 'Untitled'}
-        </Text>
-      ) : null}
+          <Text style={styles.cellAddButtonIcon}>⊕</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -59,10 +81,14 @@ function WeekPage({
   planId,
   weekStart,
   planStartsOn,
+  planEndsOn,
+  onRequestAdd,
 }: {
   planId: string;
   weekStart: Date;
   planStartsOn: Date;
+  planEndsOn: Date | null;
+  onRequestAdd: (date: Date) => void;
 }) {
   const weekEnd = addDays(weekStart, 6);
   const scheduleQuery = useSchedule(planId, weekStart, weekEnd);
@@ -87,7 +113,9 @@ function WeekPage({
               date={date}
               day={scheduleQuery.data?.days[dateParam]}
               isLoading={scheduleQuery.isLoading}
-              isBeforeStart={isBefore(date, planStartsOn)}
+              planStartsOn={planStartsOn}
+              planEndsOn={planEndsOn}
+              onRequestAdd={onRequestAdd}
             />
           );
         })}
@@ -104,6 +132,8 @@ export function WeekView({
   focusedDate,
   onFocusedDateChange,
   planStartsOn,
+  planEndsOn,
+  onRequestAdd,
   width,
 }: {
   planId: string;
@@ -111,6 +141,8 @@ export function WeekView({
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
+  planEndsOn: Date | null;
+  onRequestAdd: (date: Date) => void;
   width: number;
 }) {
   const queryClient = useQueryClient();
@@ -167,10 +199,16 @@ export function WeekView({
   const renderItem = useCallback(
     ({ item: offset }: { item: number }) => (
       <View style={{ width }}>
-        <WeekPage planId={planId} weekStart={weekStartFor(today, offset)} planStartsOn={planStartsOn} />
+        <WeekPage
+          planId={planId}
+          weekStart={weekStartFor(today, offset)}
+          planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
+          onRequestAdd={onRequestAdd}
+        />
       </View>
     ),
-    [planId, today, width, planStartsOn],
+    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd],
   );
 
   return (
@@ -224,12 +262,24 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
     borderWidth: 2,
   },
-  cellBeforeStart: {
+  cellOutOfWindow: {
     backgroundColor: colors.surfaceMuted,
+  },
+  cellAddButton: {
+    position: 'absolute',
+    right: spacing.xs,
+    bottom: spacing.xs,
+  },
+  cellAddButtonIcon: {
+    fontSize: fontSize.sm,
+    color: colors.accent,
   },
   cellSkeleton: {
     height: fontSize.xs,
     width: '70%',
+  },
+  cellEntries: {
+    gap: spacing.xs,
   },
   cellDate: {
     fontSize: fontSize.sm,

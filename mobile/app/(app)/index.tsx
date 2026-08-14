@@ -21,6 +21,7 @@ import { Card } from '@/components/Card';
 import { PageDots } from '@/components/PageDots';
 import { Screen } from '@/components/Screen';
 import { buildPlanStack, type PlanRead, type PlanStackItem } from '@/features/home/planStack';
+import { AddWorkoutModal } from '@/features/schedule/AddWorkoutModal';
 import { DayView } from '@/features/schedule/DayView';
 import { MonthView } from '@/features/schedule/MonthView';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
@@ -64,18 +65,21 @@ function CreatePlanCard() {
 function CalendarArea({
   planId,
   planStartsOn,
+  planEndsOn,
   today,
   viewMode,
   onViewModeChange,
 }: {
   planId: string;
   planStartsOn: Date;
+  planEndsOn: Date | null;
   today: Date;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
 }) {
   const [width, setWidth] = useState(0);
   const [focusedDate, setFocusedDate] = useState(today);
+  const [addModalDate, setAddModalDate] = useState<Date | null>(null);
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -95,6 +99,8 @@ function CalendarArea({
     [onViewModeChange],
   );
 
+  const closeAddModal = useCallback(() => setAddModalDate(null), []);
+
   return (
     <View style={styles.calendarArea} onLayout={onLayout}>
       {width > 0 && viewMode === 'day' ? (
@@ -104,6 +110,8 @@ function CalendarArea({
           focusedDate={focusedDate}
           onFocusedDateChange={setFocusedDate}
           planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
+          onRequestAdd={setAddModalDate}
           width={width}
         />
       ) : null}
@@ -114,6 +122,8 @@ function CalendarArea({
           focusedDate={focusedDate}
           onFocusedDateChange={setFocusedDate}
           planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
+          onRequestAdd={setAddModalDate}
           width={width}
         />
       ) : null}
@@ -123,9 +133,14 @@ function CalendarArea({
           today={today}
           focusedDate={focusedDate}
           planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
           onSelectDate={onSelectDateFromMonth}
           width={width}
         />
+      ) : null}
+
+      {addModalDate ? (
+        <AddWorkoutModal planId={planId} date={addModalDate} onClose={closeAddModal} />
       ) : null}
     </View>
   );
@@ -143,6 +158,7 @@ function PlanPage({
   onViewModeChange: (mode: ViewMode) => void;
 }) {
   const planStartsOn = useMemo(() => parseDateOnly(plan.starts_on), [plan.starts_on]);
+  const planEndsOn = useMemo(() => (plan.ends_on ? parseDateOnly(plan.ends_on) : null), [plan.ends_on]);
 
   return (
     <View style={styles.page}>
@@ -159,6 +175,7 @@ function PlanPage({
       <CalendarArea
         planId={plan.id}
         planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
         today={today}
         viewMode={viewMode}
         onViewModeChange={onViewModeChange}

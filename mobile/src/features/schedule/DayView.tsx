@@ -1,4 +1,4 @@
-import { addDays, differenceInCalendarDays, format, isBefore, isToday } from 'date-fns';
+import { addDays, differenceInCalendarDays, format, isToday } from 'date-fns';
 import { useCallback, useMemo } from 'react';
 import {
   FlatList,
@@ -6,15 +6,17 @@ import {
   type NativeSyntheticEvent,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 
 import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
 import { Skeleton } from '@/components/Skeleton';
-import { colors, fontSize, fontWeight, spacing } from '@/theme';
+import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { useSchedule, type DaySchedule, type EntryRef, type ResolvedEntry } from './api';
+import { planWindowState, type PlanWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 
 // Fixed range of +/-180 days around today, rather than an infinite recentering
@@ -63,9 +65,12 @@ function DaySkeleton() {
   );
 }
 
-function DayContent({ day, isBeforePlanStart }: { day: DaySchedule | undefined; isBeforePlanStart: boolean }) {
-  if (isBeforePlanStart) {
-    return <Text style={styles.beforeStartText}>Before this plan starts</Text>;
+function DayContent({ day, windowState }: { day: DaySchedule | undefined; windowState: PlanWindowState }) {
+  if (windowState === 'before') {
+    return <Text style={styles.outOfWindowText}>Before this plan starts</Text>;
+  }
+  if (windowState === 'after') {
+    return <Text style={styles.outOfWindowText}>After this plan ended</Text>;
   }
 
   if (!day || (day.entries.length === 0 && day.cancelled.length === 0)) {
@@ -84,10 +89,23 @@ function DayContent({ day, isBeforePlanStart }: { day: DaySchedule | undefined; 
   );
 }
 
-function DayPage({ planId, date, planStartsOn }: { planId: string; date: Date; planStartsOn: Date }) {
+function DayPage({
+  planId,
+  date,
+  planStartsOn,
+  planEndsOn,
+  onRequestAdd,
+}: {
+  planId: string;
+  date: Date;
+  planStartsOn: Date;
+  planEndsOn: Date | null;
+  onRequestAdd: (date: Date) => void;
+}) {
   const dateParam = format(date, 'yyyy-MM-dd');
   const scheduleQuery = useSchedule(planId, date, date);
   const day = scheduleQuery.data?.days[dateParam];
+  const windowState = planWindowState(date, planStartsOn, planEndsOn);
 
   return (
     <View style={styles.dayPage}>
@@ -104,9 +122,20 @@ function DayPage({ planId, date, planStartsOn }: { planId: string; date: Date; p
         ) : scheduleQuery.isError ? (
           <ScheduleErrorState error={scheduleQuery.error} onRetry={scheduleQuery.refetch} />
         ) : (
-          <DayContent day={day} isBeforePlanStart={isBefore(date, planStartsOn)} />
+          <DayContent day={day} windowState={windowState} />
         )}
       </Card>
+
+      {windowState === 'within' ? (
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => onRequestAdd(date)}
+          accessibilityRole="button"
+          accessibilityLabel="Add workout"
+        >
+          <Text style={styles.addButtonIcon}>⊕</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -117,6 +146,8 @@ export function DayView({
   focusedDate,
   onFocusedDateChange,
   planStartsOn,
+  planEndsOn,
+  onRequestAdd,
   width,
 }: {
   planId: string;
@@ -124,6 +155,8 @@ export function DayView({
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
+  planEndsOn: Date | null;
+  onRequestAdd: (date: Date) => void;
   width: number;
 }) {
   const offsets = useMemo(() => DAY_OFFSETS, []);
@@ -163,10 +196,16 @@ export function DayView({
   const renderItem = useCallback(
     ({ item: offset }: { item: number }) => (
       <View style={{ width }}>
-        <DayPage planId={planId} date={addDays(today, offset)} planStartsOn={planStartsOn} />
+        <DayPage
+          planId={planId}
+          date={addDays(today, offset)}
+          planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
+          onRequestAdd={onRequestAdd}
+        />
       </View>
     ),
-    [planId, today, width, planStartsOn],
+    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd],
   );
 
   return (
@@ -205,12 +244,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  addButton: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: spacing.lg,
+    width: spacing.xl,
+    height: spacing.xl,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+  },
+  addButtonIcon: {
+    fontSize: fontSize.lg,
+    color: colors.background,
+  },
   emptyText: {
     fontSize: fontSize.md,
     color: colors.textMuted,
     textAlign: 'center',
   },
-  beforeStartText: {
+  outOfWindowText: {
     fontSize: fontSize.md,
     color: colors.textMuted,
     fontStyle: 'italic',

@@ -13,6 +13,7 @@ export const colors = {
   accent: '#208AEF',
   danger: '#D6423C',
   success: '#1A9C4A',
+  overlay: 'rgba(17, 17, 20, 0.5)',
 } as const;
 
 export const spacing = {
