@@ -25,10 +25,15 @@ import { ScheduleErrorState } from './ScheduleErrorState';
 const DAY_WINDOW = 180;
 const DAY_OFFSETS = Array.from({ length: DAY_WINDOW * 2 + 1 }, (_, i) => i - DAY_WINDOW);
 
-function EntryRow({ entry }: { entry: ResolvedEntry }) {
+function EntryRow({ entry, onPress }: { entry: ResolvedEntry; onPress: () => void }) {
   if (entry.status === 'substituted') {
     return (
-      <View style={styles.entryRow}>
+      <TouchableOpacity
+        style={styles.entryRow}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`Manage ${entry.name ?? 'Untitled'}`}
+      >
         <View style={styles.substitutedHeader}>
           <Text style={styles.swapIcon}>⇄</Text>
           <Text style={styles.substitutedName}>{entry.name ?? 'Untitled'}</Text>
@@ -36,14 +41,19 @@ function EntryRow({ entry }: { entry: ResolvedEntry }) {
         {entry.replaced ? (
           <Text style={styles.replacedText}>replaced {entry.replaced.name ?? 'Untitled'}</Text>
         ) : null}
-      </View>
+      </TouchableOpacity>
     );
   }
 
   return (
-    <View style={styles.entryRow}>
+    <TouchableOpacity
+      style={styles.entryRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Manage ${entry.name ?? 'Untitled'}`}
+    >
       <Text style={styles.scheduledName}>{entry.name ?? 'Untitled'}</Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -65,7 +75,15 @@ function DaySkeleton() {
   );
 }
 
-function DayContent({ day, windowState }: { day: DaySchedule | undefined; windowState: PlanWindowState }) {
+function DayContent({
+  day,
+  windowState,
+  onEntryPress,
+}: {
+  day: DaySchedule | undefined;
+  windowState: PlanWindowState;
+  onEntryPress: (entry: ResolvedEntry) => void;
+}) {
   if (windowState === 'before') {
     return <Text style={styles.outOfWindowText}>Before this plan starts</Text>;
   }
@@ -80,7 +98,7 @@ function DayContent({ day, windowState }: { day: DaySchedule | undefined; window
   return (
     <View style={styles.entryList}>
       {day.entries.map((entry) => (
-        <EntryRow key={entry.entry_id} entry={entry} />
+        <EntryRow key={entry.entry_id} entry={entry} onPress={() => onEntryPress(entry)} />
       ))}
       {day.cancelled.map((target) => (
         <CancelledRow key={target.entry_id} target={target} />
@@ -95,12 +113,14 @@ function DayPage({
   planStartsOn,
   planEndsOn,
   onRequestAdd,
+  onRequestEntryAction,
 }: {
   planId: string;
   date: Date;
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
+  onRequestEntryAction: (entry: ResolvedEntry, date: Date) => void;
 }) {
   const dateParam = format(date, 'yyyy-MM-dd');
   const scheduleQuery = useSchedule(planId, date, date);
@@ -122,7 +142,11 @@ function DayPage({
         ) : scheduleQuery.isError ? (
           <ScheduleErrorState error={scheduleQuery.error} onRetry={scheduleQuery.refetch} />
         ) : (
-          <DayContent day={day} windowState={windowState} />
+          <DayContent
+            day={day}
+            windowState={windowState}
+            onEntryPress={(entry) => onRequestEntryAction(entry, date)}
+          />
         )}
       </Card>
 
@@ -148,6 +172,7 @@ export function DayView({
   planStartsOn,
   planEndsOn,
   onRequestAdd,
+  onRequestEntryAction,
   width,
 }: {
   planId: string;
@@ -157,6 +182,7 @@ export function DayView({
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
+  onRequestEntryAction: (entry: ResolvedEntry, date: Date) => void;
   width: number;
 }) {
   const offsets = useMemo(() => DAY_OFFSETS, []);
@@ -202,10 +228,11 @@ export function DayView({
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={onRequestAdd}
+          onRequestEntryAction={onRequestEntryAction}
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd],
+    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
   );
 
   return (

@@ -22,7 +22,9 @@ import { PageDots } from '@/components/PageDots';
 import { Screen } from '@/components/Screen';
 import { buildPlanStack, type PlanRead, type PlanStackItem } from '@/features/home/planStack';
 import { AddWorkoutModal } from '@/features/schedule/AddWorkoutModal';
+import type { ResolvedEntry } from '@/features/schedule/api';
 import { DayView } from '@/features/schedule/DayView';
+import { EntryActionsSheet } from '@/features/schedule/EntryActionsSheet';
 import { MonthView } from '@/features/schedule/MonthView';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
 import { ViewModeControl } from '@/features/schedule/ViewModeControl';
@@ -80,6 +82,7 @@ function CalendarArea({
   const [width, setWidth] = useState(0);
   const [focusedDate, setFocusedDate] = useState(today);
   const [addModalDate, setAddModalDate] = useState<Date | null>(null);
+  const [entryAction, setEntryAction] = useState<{ entry: ResolvedEntry; date: Date } | null>(null);
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -101,6 +104,12 @@ function CalendarArea({
 
   const closeAddModal = useCallback(() => setAddModalDate(null), []);
 
+  const onRequestEntryAction = useCallback(
+    (entry: ResolvedEntry, date: Date) => setEntryAction({ entry, date }),
+    [],
+  );
+  const closeEntryAction = useCallback(() => setEntryAction(null), []);
+
   return (
     <View style={styles.calendarArea} onLayout={onLayout}>
       {width > 0 && viewMode === 'day' ? (
@@ -112,6 +121,7 @@ function CalendarArea({
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={setAddModalDate}
+          onRequestEntryAction={onRequestEntryAction}
           width={width}
         />
       ) : null}
@@ -142,6 +152,15 @@ function CalendarArea({
       {addModalDate ? (
         <AddWorkoutModal planId={planId} date={addModalDate} onClose={closeAddModal} />
       ) : null}
+
+      {entryAction ? (
+        <EntryActionsSheet
+          planId={planId}
+          date={entryAction.date}
+          entry={entryAction.entry}
+          onClose={closeEntryAction}
+        />
+      ) : null}
     </View>
   );
 }
@@ -169,6 +188,13 @@ function PlanPage({
           </Text>
           {plan.is_active ? <Badge label="Active" variant="success" /> : null}
         </View>
+        <TouchableOpacity
+          onPress={() => router.push(`/(app)/plans/${plan.id}/workouts`)}
+          accessibilityRole="button"
+          accessibilityLabel="Manage workouts"
+        >
+          <Text style={styles.workoutsLink}>Workouts</Text>
+        </TouchableOpacity>
         <ViewModeControl value={viewMode} onChange={onViewModeChange} />
       </View>
 
@@ -347,6 +373,11 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xl,
     fontWeight: fontWeight.bold,
     color: colors.text,
+  },
+  workoutsLink: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.accent,
   },
   calendarArea: {
     flex: 1,
