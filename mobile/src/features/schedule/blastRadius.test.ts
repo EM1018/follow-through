@@ -3,10 +3,12 @@ import {
   dependentsOf,
   describeEntry,
   entriesForWorkout,
+  entryAppliesOn,
   entryDeleteImpact,
   findCancellationEntry,
   rootEntryOf,
   siblingWeekdays,
+  strandedBy,
   workoutDeleteImpact,
   type DaySchedule,
   type ScheduleEntry,
@@ -251,5 +253,104 @@ describe('actionsFor', () => {
       workout_id: 'w1',
     });
     expect(actionsFor(DUMMY_DAY, replacement)).toEqual(['changeSwap', 'undoSwap', 'cancel']);
+  });
+});
+
+// 2026-08-17 is a Monday, 2026-08-18 a Tuesday, 2026-08-24 the following Monday.
+describe('entryAppliesOn', () => {
+  it('recurring, in bounds: matches its weekday within starts_on/ends_on', () => {
+    const entry = makeEntry('e1', { day_of_week: 1, starts_on: '2026-08-01', ends_on: '2026-08-31' });
+    expect(entryAppliesOn(entry, new Date(2026, 7, 17))).toBe(true);
+  });
+
+  it('recurring, out of bounds: right weekday, but before starts_on or after ends_on', () => {
+    const boundedLate = makeEntry('e1', { day_of_week: 1, starts_on: '2026-08-22', ends_on: null });
+    expect(entryAppliesOn(boundedLate, new Date(2026, 7, 17))).toBe(false);
+
+    const boundedEarly = makeEntry('e2', { day_of_week: 1, starts_on: null, ends_on: '2026-08-10' });
+    expect(entryAppliesOn(boundedEarly, new Date(2026, 7, 17))).toBe(false);
+
+    const wrongWeekday = makeEntry('e3', { day_of_week: 3, starts_on: null, ends_on: null });
+    expect(entryAppliesOn(wrongWeekday, new Date(2026, 7, 17))).toBe(false);
+  });
+
+  it('recurring, unbounded: matches its weekday with no starts_on/ends_on at all', () => {
+    const entry = makeEntry('e1', { day_of_week: 1, starts_on: null, ends_on: null });
+    expect(entryAppliesOn(entry, new Date(2026, 7, 17))).toBe(true);
+    expect(entryAppliesOn(entry, new Date(2026, 7, 24))).toBe(true);
+  });
+
+  it('dated: matches only its exact on_date', () => {
+    const entry = makeEntry('e1', { on_date: '2026-08-18' });
+    expect(entryAppliesOn(entry, new Date(2026, 7, 18))).toBe(true);
+    expect(entryAppliesOn(entry, new Date(2026, 7, 19))).toBe(false);
+  });
+});
+
+describe('strandedBy', () => {
+  it('a weekday move strands a replacement whose dated row stays on the old day', () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const replacement = makeEntry('rep', {
+      replaces_entry_id: 'root',
+      on_date: '2026-08-17',
+      workout_id: 'yoga',
+    });
+
+    const result = strandedBy([root, replacement], root, { day_of_week: 3 });
+
+    expect(result.replacements).toEqual([replacement]);
+    expect(result.cancellations).toEqual([]);
+  });
+
+  it('a weekday move strands a cancellation whose dated row stays on the old day', () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const cancellation = makeEntry('cancel', {
+      replaces_entry_id: 'root',
+      on_date: '2026-08-17',
+      workout_id: null,
+      name_override: null,
+    });
+
+    const result = strandedBy([root, cancellation], root, { day_of_week: 3 });
+
+    expect(result.cancellations).toEqual([cancellation]);
+    expect(result.replacements).toEqual([]);
+  });
+
+  it('a narrowed ends_on strands a later dependent', () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const later = makeEntry('rep', { replaces_entry_id: 'root', on_date: '2026-08-24', workout_id: 'yoga' });
+
+    const result = strandedBy([root, later], root, { ends_on: '2026-08-20' });
+
+    expect(result.replacements).toEqual([later]);
+  });
+
+  it("a starts_on pushed later strands an earlier dependent that's now before the window", () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const earlier = makeEntry('rep', { replaces_entry_id: 'root', on_date: '2026-08-17', workout_id: 'yoga' });
+
+    const result = strandedBy([root, earlier], root, { starts_on: '2026-08-22' });
+
+    expect(result.replacements).toEqual([earlier]);
+  });
+
+  it('a workout_id patch strands nothing, even with a dependent that would otherwise still match', () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const replacement = makeEntry('rep', { replaces_entry_id: 'root', on_date: '2026-08-17', workout_id: 'yoga' });
+
+    const result = strandedBy([root, replacement], root, { workout_id: 'legs' });
+
+    expect(result).toEqual({ replacements: [], cancellations: [] });
+  });
+
+  it('a move the dependent still matches afterward strands nothing', () => {
+    const root = makeEntry('root', { day_of_week: 1, starts_on: null, ends_on: null, workout_id: 'push' });
+    const replacement = makeEntry('rep', { replaces_entry_id: 'root', on_date: '2026-08-17', workout_id: 'yoga' });
+
+    // Still Monday, still within the new (wider) bounds.
+    const result = strandedBy([root, replacement], root, { starts_on: '2026-08-01' });
+
+    expect(result).toEqual({ replacements: [], cancellations: [] });
   });
 });

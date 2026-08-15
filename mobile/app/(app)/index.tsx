@@ -157,6 +157,8 @@ function CalendarArea({
           planId={planId}
           date={entryAction.date}
           target={entryAction.target}
+          planStartsOn={planStartsOn}
+          planEndsOn={planEndsOn}
           onClose={closeEntryAction}
         />
       ) : null}

@@ -17,6 +17,16 @@ import { pickerEmptyMessage } from './workoutPicker';
 
 const EMPTY_WORKOUTS: WorkoutRead[] = [];
 
+/**
+ * What the caller gets back. `newWorkoutMode` controls how a typed name
+ * resolves: 'create' (prompt 12's swap/change-swap -- "a 'New workout' path
+ * that takes a name and creates one") always yields a `workout` selection,
+ * since the workout is created first; 'nameOnly' (prompt 13's Change workout)
+ * never creates a Workout row at all and hands the raw name back as-is, so
+ * the caller can PATCH `name_override` directly.
+ */
+export type WorkoutSelection = { kind: 'workout'; workoutId: string } | { kind: 'name'; name: string };
+
 function WorkoutRowSkeleton() {
   return (
     <View style={styles.row}>
@@ -62,13 +72,17 @@ export function WorkoutPickerSheet({
   planId,
   date,
   currentWorkoutId,
+  title = 'Choose a workout',
+  newWorkoutMode = 'create',
   onSelect,
   onClose,
 }: {
   planId: string;
   date: Date;
   currentWorkoutId: string | null;
-  onSelect: (workoutId: string) => void;
+  title?: string;
+  newWorkoutMode?: 'create' | 'nameOnly';
+  onSelect: (selection: WorkoutSelection) => void;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -94,7 +108,7 @@ export function WorkoutPickerSheet({
       ),
     onSuccess: (workout) => {
       queryClient.invalidateQueries({ queryKey: ['plans', planId, 'workouts'] });
-      onSelect(workout.id);
+      onSelect({ kind: 'workout', workoutId: workout.id });
     },
     onError: () => {
       Alert.alert("Couldn't create workout.", 'Try again.');
@@ -103,12 +117,21 @@ export function WorkoutPickerSheet({
 
   const canCreate = newWorkoutName.trim().length > 0 && !createWorkoutMutation.isPending;
 
+  function handleAddNewWorkout() {
+    const name = newWorkoutName.trim();
+    if (newWorkoutMode === 'nameOnly') {
+      onSelect({ kind: 'name', name });
+      return;
+    }
+    createWorkoutMutation.mutate(name);
+  }
+
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.sheetWrap} onPress={() => {}}>
           <Card style={styles.sheet}>
-            <Text style={styles.title}>Choose a workout</Text>
+            <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>{format(date, 'EEEE, MMMM d')}</Text>
 
             <View style={styles.divider} />
@@ -132,7 +155,7 @@ export function WorkoutPickerSheet({
                     key={workout.id}
                     workout={workout}
                     isCurrent={workout.id === currentWorkoutId}
-                    onPress={() => onSelect(workout.id)}
+                    onPress={() => onSelect({ kind: 'workout', workoutId: workout.id })}
                   />
                 ))}
               </View>
@@ -151,9 +174,9 @@ export function WorkoutPickerSheet({
               <Button
                 label="Add"
                 variant="secondary"
-                onPress={() => createWorkoutMutation.mutate(newWorkoutName.trim())}
+                onPress={handleAddNewWorkout}
                 disabled={!canCreate}
-                loading={createWorkoutMutation.isPending}
+                loading={newWorkoutMode === 'create' && createWorkoutMutation.isPending}
               />
             </View>
           </Card>

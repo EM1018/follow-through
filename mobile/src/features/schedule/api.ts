@@ -10,6 +10,7 @@ export type DaySchedule = components['schemas']['DayScheduleRead'];
 export type ResolvedEntry = components['schemas']['ResolvedEntryRead'];
 export type EntryRef = components['schemas']['EntryRefRead'];
 export type WorkoutRead = components['schemas']['WorkoutRead'];
+export type WorkoutUpdate = components['schemas']['WorkoutUpdate'];
 export type ScheduleEntryRead = components['schemas']['ScheduleEntryRead'];
 
 /** Shared between useSchedule and queryClient.prefetchQuery so both always hit the same cache entry. */

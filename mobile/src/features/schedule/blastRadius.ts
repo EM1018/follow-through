@@ -1,12 +1,16 @@
-import { format } from 'date-fns';
+import { format, getISODay } from 'date-fns';
 
 import type { components } from '@/api/schema';
 import { parseDateOnly } from '@/lib/dates';
 
 export type ScheduleEntry = components['schemas']['ScheduleEntryRead'];
+export type ScheduleEntryPatch = components['schemas']['ScheduleEntryUpdate'];
 export type DaySchedule = components['schemas']['DayScheduleRead'];
 export type Workout = components['schemas']['WorkoutRead'];
 export type WorkoutsById = Record<string, Workout>;
+
+/** Patch fields that can change which dates an entry applies to -- see strandedBy. */
+const STRANDING_FIELDS = ['day_of_week', 'on_date', 'starts_on', 'ends_on'] as const;
 
 export type Action = 'cancel' | 'restore' | 'swap' | 'changeSwap' | 'undoSwap' | 'delete';
 
@@ -56,6 +60,65 @@ export function dependentsOf(entries: ScheduleEntry[], entryId: string): Schedul
 
 export function entriesForWorkout(entries: ScheduleEntry[], workoutId: string): ScheduleEntry[] {
   return entries.filter((entry) => entry.workout_id === workoutId);
+}
+
+/** Mirrors the backend's _matches (app/services/resolution.py): dated entries match exactly, recurring ones match by weekday within starts_on/ends_on. */
+export function entryAppliesOn(entry: ScheduleEntry, date: Date): boolean {
+  const dateParam = format(date, 'yyyy-MM-dd');
+
+  if (entry.on_date !== null) {
+    return entry.on_date === dateParam;
+  }
+  if (entry.day_of_week === null) {
+    return false;
+  }
+
+  return (
+    getISODay(date) === entry.day_of_week &&
+    (entry.starts_on === null || entry.starts_on <= dateParam) &&
+    (entry.ends_on === null || dateParam <= entry.ends_on)
+  );
+}
+
+/**
+ * Direct dependents (cancellations/replacements against `entry`) that `patch`
+ * would strand: dated rows whose own date currently matches `entry` but
+ * wouldn't once the patch lands, left pointing at a rule that no longer
+ * applies there. Only day_of_week/on_date/starts_on/ends_on can strand
+ * anything -- a workout_id/name_override change doesn't touch which dates the
+ * rule covers, so this returns empty for those without inspecting dependents
+ * at all. Direct dependents only: chains are flat as of prompt 12.
+ */
+export function strandedBy(
+  entries: ScheduleEntry[],
+  entry: ScheduleEntry,
+  patch: ScheduleEntryPatch,
+): { replacements: ScheduleEntry[]; cancellations: ScheduleEntry[] } {
+  const canStrand = STRANDING_FIELDS.some((field) => field in patch);
+  if (!canStrand) {
+    return { replacements: [], cancellations: [] };
+  }
+
+  const patched: ScheduleEntry = { ...entry, ...patch };
+  const replacements: ScheduleEntry[] = [];
+  const cancellations: ScheduleEntry[] = [];
+
+  for (const dependent of entries) {
+    if (dependent.replaces_entry_id !== entry.id || dependent.on_date === null) {
+      continue;
+    }
+
+    const dependentDate = parseDateOnly(dependent.on_date);
+    const strandedNow = entryAppliesOn(entry, dependentDate) && !entryAppliesOn(patched, dependentDate);
+    if (!strandedNow) {
+      continue;
+    }
+
+    const isCancellation = dependent.workout_id === null && dependent.name_override === null;
+    (isCancellation ? cancellations : replacements).push(dependent);
+  }
+
+  return { replacements, cancellations };
 }
 
 /** What the composite FK cascade will actually remove if a workout is deleted. */

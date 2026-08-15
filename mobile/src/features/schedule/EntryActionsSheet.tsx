@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
+import { format, startOfToday } from 'date-fns';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -21,23 +21,41 @@ import {
 import {
   actionsFor,
   dependentsOf,
+  describeSchedule,
   findCancellationEntry,
   rootEntryOf,
+  strandedBy,
   WEEKDAY_NAMES,
   type Action,
   type ScheduleEntry,
 } from './blastRadius';
 import { entryDeleteDialogCopy, restoreDialogCopy, undoSwapDialogCopy } from './deleteCopy';
+import { EditScheduleSheet } from './EditScheduleSheet';
 import { cancellationPayload, replacementPayload, type ScheduleEntryCreate } from './entryPayload';
 import { applyOptimisticCancel } from './scheduleCache';
-import { WorkoutPickerSheet } from './WorkoutPickerSheet';
+import { changeToExistingWorkoutPatch, changeToNewNamePatch, patchThenClearStranded, stopRepeatingPatch } from './scheduleEdit';
+import { changeWorkoutConfirmCopy, stopRepeatingConfirmCopy, stopRepeatingFailureMessage } from './scheduleEditCopy';
+import { WorkoutPickerSheet, type WorkoutSelection } from './WorkoutPickerSheet';
 
 const EMPTY_ENTRIES: never[] = [];
 const EMPTY_WORKOUTS: WorkoutRead[] = [];
 
 export type EntryTarget = { kind: 'resolved'; entry: ResolvedEntry } | { kind: 'cancelled'; target: EntryRef };
 
-type PickerAction = 'swap' | 'changeSwap';
+type PickerAction = 'swap' | 'changeSwap' | 'changeWorkout';
+
+/** Whole-rule actions (prompt 13) -- distinct from Action (prompt 11/12's day-level + swap-lifecycle verbs) so blastRadius.ts stays untouched beyond Stage 0. */
+type RuleAction = 'editSchedule' | 'editDate' | 'changeWorkout' | 'stopRepeating';
+type SheetAction = Action | RuleAction;
+
+function ruleActionsFor(entry: ScheduleEntry): RuleAction[] {
+  if (entry.replaces_entry_id !== null) {
+    return [];
+  }
+  return entry.day_of_week !== null
+    ? ['editSchedule', 'changeWorkout', 'stopRepeating']
+    : ['editDate', 'changeWorkout'];
+}
 
 /**
  * Shared by Change swap and Cancel-from-substituted: the existing row has to
@@ -65,7 +83,7 @@ async function replaceExisting(
   }
 }
 
-function actionLabel(action: Action, entry: ScheduleEntry): string {
+function actionLabel(action: SheetAction, entry: ScheduleEntry): string {
   switch (action) {
     case 'cancel':
       return 'Cancel this day';
@@ -77,6 +95,14 @@ function actionLabel(action: Action, entry: ScheduleEntry): string {
       return 'Change swap';
     case 'undoSwap':
       return 'Undo swap';
+    case 'editSchedule':
+      return 'Edit schedule';
+    case 'editDate':
+      return 'Edit date';
+    case 'changeWorkout':
+      return 'Change workout';
+    case 'stopRepeating':
+      return 'Stop repeating';
     case 'delete':
       return entry.day_of_week !== null ? `Delete every ${WEEKDAY_NAMES[entry.day_of_week]}` : 'Delete this day';
   }
@@ -88,11 +114,15 @@ export function EntryActionsSheet({
   planId,
   date,
   target,
+  planStartsOn,
+  planEndsOn,
   onClose,
 }: {
   planId: string;
   date: Date;
   target: EntryTarget;
+  planStartsOn: Date;
+  planEndsOn: Date | null;
   onClose: () => void;
 }) {
   const dateParam = format(date, 'yyyy-MM-dd');
@@ -102,6 +132,7 @@ export function EntryActionsSheet({
   const entriesQuery = useScheduleEntries(planId);
   const workoutsQuery = useWorkouts(planId);
   const [pickerAction, setPickerAction] = useState<PickerAction | null>(null);
+  const [editingSchedule, setEditingSchedule] = useState(false);
 
   const day = dayQuery.data?.days[dateParam];
   const entries = entriesQuery.data ?? EMPTY_ENTRIES;
@@ -117,6 +148,9 @@ export function EntryActionsSheet({
   );
   const root = rawEntry ? rootEntryOf(entries, rawEntry) : undefined;
   const actions = day && rawEntry ? actionsFor(day, rawEntry) : [];
+  const isRoot = rawEntry !== undefined && rawEntry.replaces_entry_id === null;
+  const ruleActions = rawEntry ? ruleActionsFor(rawEntry) : [];
+  const isRecurringRoot = isRoot && rawEntry?.day_of_week !== null;
 
   const displayName = target.kind === 'cancelled' ? target.target.name : target.entry.name;
   const workoutName = displayName ?? 'a deleted workout';
@@ -326,11 +360,55 @@ export function EntryActionsSheet({
     ]);
   }
 
-  function handlePickerSelect(workoutId: string) {
-    if (pickerAction === 'swap') {
-      swapMutation.mutate(workoutId);
-    } else if (pickerAction === 'changeSwap') {
-      changeSwapMutation.mutate(workoutId);
+  // Change workout: unlike Swap/Change swap, this doesn't create or replace
+  // any row -- it PATCHes the root entry itself, so existing replacements
+  // (which point at the entry, not its workout) are untouched. Always
+  // confirms first, naming the actual new workout.
+  const changeWorkoutMutation = useMutation<ScheduleEntry, ApiError, WorkoutSelection>({
+    mutationFn: (selection) =>
+      unwrap(
+        api.PATCH('/plans/{plan_id}/schedule-entries/{entry_id}', {
+          params: { path: { plan_id: planId, entry_id: (rawEntry as ScheduleEntry).id } },
+          body:
+            selection.kind === 'workout'
+              ? changeToExistingWorkoutPatch(selection.workoutId)
+              : changeToNewNamePatch(selection.name),
+        }),
+      ),
+    onSuccess: () => {
+      setPickerAction(null);
+      invalidateAndClose();
+    },
+    onError: (error) => {
+      if (error.kind === 'not_found') {
+        setPickerAction(null);
+        invalidateAndClose();
+        return;
+      }
+      Alert.alert("Couldn't change workout.", 'Try again.');
+    },
+  });
+
+  function confirmChangeWorkout(selection: WorkoutSelection) {
+    if (!rawEntry) {
+      return;
+    }
+    const newWorkoutName =
+      selection.kind === 'workout' ? (workoutsById[selection.workoutId]?.name ?? 'a deleted workout') : selection.name;
+    const { title, message } = changeWorkoutConfirmCopy(rawEntry, newWorkoutName);
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Change workout', onPress: () => changeWorkoutMutation.mutate(selection) },
+    ]);
+  }
+
+  function handlePickerSelect(selection: WorkoutSelection) {
+    if (pickerAction === 'swap' && selection.kind === 'workout') {
+      swapMutation.mutate(selection.workoutId);
+    } else if (pickerAction === 'changeSwap' && selection.kind === 'workout') {
+      changeSwapMutation.mutate(selection.workoutId);
+    } else if (pickerAction === 'changeWorkout') {
+      confirmChangeWorkout(selection);
     }
   }
 
@@ -367,7 +445,67 @@ export function EntryActionsSheet({
     ]);
   }
 
-  function onActionPress(action: Action) {
+  // Stop repeating: PATCH ends_on to today, then clear any rows this
+  // strands, same two-step orchestration Edit schedule uses. Unlike Edit
+  // schedule, this always confirms -- even with nothing stranded, the base
+  // sentence alone is reason enough to ask first (see stopRepeatingConfirmCopy).
+  const stopRepeatingMutation = useMutation<{ failedCount: number }, ApiError, string[]>({
+    mutationFn: (strandedIds) =>
+      patchThenClearStranded(
+        () =>
+          unwrap(
+            api.PATCH('/plans/{plan_id}/schedule-entries/{entry_id}', {
+              params: { path: { plan_id: planId, entry_id: (rawEntry as ScheduleEntry).id } },
+              body: stopRepeatingPatch(startOfToday()),
+            }),
+          ).then(() => undefined),
+        strandedIds,
+        (entryId) =>
+          unwrap(
+            api.DELETE('/plans/{plan_id}/schedule-entries/{entry_id}', {
+              params: { path: { plan_id: planId, entry_id: entryId } },
+            }),
+          ),
+      ),
+    onSuccess: ({ failedCount }) => {
+      invalidatePlanScheduleData(queryClient, planId);
+      if (failedCount > 0) {
+        Alert.alert("Couldn't clear everything", stopRepeatingFailureMessage(failedCount));
+      }
+      onClose();
+    },
+    onError: (error) => {
+      if (error.kind === 'not_found') {
+        invalidateAndClose();
+        return;
+      }
+      Alert.alert("Couldn't stop repeating.", 'Try again.');
+    },
+  });
+
+  function confirmStopRepeating() {
+    if (!rawEntry) {
+      return;
+    }
+    const stranded = strandedBy(entries, rawEntry, stopRepeatingPatch(startOfToday()));
+    const strandedRows = [...stranded.replacements, ...stranded.cancellations];
+    const { title, message } = stopRepeatingConfirmCopy(workoutName, rawEntry, stranded, workoutsById);
+
+    const buttons: Parameters<typeof Alert.alert>[2] = [{ text: 'Cancel', style: 'cancel' }];
+    if (strandedRows.length > 0) {
+      buttons.push({
+        text: 'Stop and clear them',
+        onPress: () => stopRepeatingMutation.mutate(strandedRows.map((row) => row.id)),
+      });
+      buttons.push({ text: 'Stop and keep them', onPress: () => stopRepeatingMutation.mutate([]) });
+    } else {
+      buttons.push({ text: 'Stop repeating', onPress: () => stopRepeatingMutation.mutate([]) });
+    }
+
+    Alert.alert(title, message, buttons);
+  }
+
+  function onActionPress(action: SheetAction) {
     if (!rawEntry || !root) {
       return;
     }
@@ -394,21 +532,82 @@ export function EntryActionsSheet({
       case 'undoSwap':
         confirmUndoSwap();
         return;
+      case 'editSchedule':
+      case 'editDate':
+        setEditingSchedule(true);
+        return;
+      case 'stopRepeating':
+        confirmStopRepeating();
+        return;
+      case 'changeWorkout':
+        setPickerAction('changeWorkout');
+        return;
     }
   }
 
-  const nonDestructiveActions = actions.filter((action) => action !== 'delete');
+  const nonDestructiveActions: SheetAction[] = [...actions.filter((action) => action !== 'delete'), ...ruleActions];
   const hasDelete = actions.includes('delete');
+  const daySectionCount = actions.filter((action) => action !== 'delete').length;
 
   if (pickerAction) {
+    const isChangeWorkout = pickerAction === 'changeWorkout';
+    const changeWorkoutTitle =
+      rawEntry &&
+      (rawEntry.day_of_week !== null
+        ? `Change what every ${WEEKDAY_NAMES[rawEntry.day_of_week]} does`
+        : `Change what ${describeSchedule(rawEntry)} does`);
     return (
       <WorkoutPickerSheet
         planId={planId}
         date={date}
         currentWorkoutId={rawEntry?.workout_id ?? null}
+        title={isChangeWorkout && changeWorkoutTitle ? changeWorkoutTitle : undefined}
+        newWorkoutMode={isChangeWorkout ? 'nameOnly' : 'create'}
         onSelect={handlePickerSelect}
         onClose={() => setPickerAction(null)}
       />
+    );
+  }
+
+  if (editingSchedule && rawEntry) {
+    return (
+      <EditScheduleSheet
+        planId={planId}
+        entry={rawEntry}
+        workoutName={workoutName}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        onClose={() => setEditingSchedule(false)}
+        onSaved={() => {
+          setEditingSchedule(false);
+          onClose();
+        }}
+      />
+    );
+  }
+
+  // Recurring roots get two labelled sections (2.1); everything else --
+  // dated roots, cancellations, replacements -- stays a flat list.
+  const daySection = isRecurringRoot ? nonDestructiveActions.slice(0, daySectionCount) : [];
+  const ruleSection = isRecurringRoot ? nonDestructiveActions.slice(daySectionCount) : [];
+  const weekdayName = rawEntry?.day_of_week !== null && rawEntry?.day_of_week !== undefined
+    ? WEEKDAY_NAMES[rawEntry.day_of_week]
+    : '';
+
+  function renderAction(action: SheetAction) {
+    if (!rawEntry) {
+      return null;
+    }
+    return (
+      <TouchableOpacity
+        key={action}
+        style={styles.actionRow}
+        onPress={() => onActionPress(action)}
+        accessibilityRole="button"
+        accessibilityLabel={actionLabel(action, rawEntry)}
+      >
+        <Text style={styles.actionText}>{actionLabel(action, rawEntry)}</Text>
+      </TouchableOpacity>
     );
   }
 
@@ -426,17 +625,16 @@ export function EntryActionsSheet({
               <ActivityIndicator color={colors.accent} style={styles.loading} />
             ) : rawEntry ? (
               <View style={styles.actionList}>
-                {nonDestructiveActions.map((action) => (
-                  <TouchableOpacity
-                    key={action}
-                    style={styles.actionRow}
-                    onPress={() => onActionPress(action)}
-                    accessibilityRole="button"
-                    accessibilityLabel={actionLabel(action, rawEntry)}
-                  >
-                    <Text style={styles.actionText}>{actionLabel(action, rawEntry)}</Text>
-                  </TouchableOpacity>
-                ))}
+                {isRecurringRoot ? (
+                  <>
+                    <Text style={styles.sectionHeader}>This {weekdayName}</Text>
+                    {daySection.map(renderAction)}
+                    <Text style={styles.sectionHeader}>Every {weekdayName}</Text>
+                    {ruleSection.map(renderAction)}
+                  </>
+                ) : (
+                  nonDestructiveActions.map(renderAction)
+                )}
 
                 {hasDelete ? (
                   <>
@@ -492,6 +690,13 @@ const styles = StyleSheet.create({
   },
   actionList: {
     gap: spacing.xs,
+  },
+  sectionHeader: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    marginTop: spacing.xs,
   },
   actionRow: {
     paddingVertical: spacing.md,

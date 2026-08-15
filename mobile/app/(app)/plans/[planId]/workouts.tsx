@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { api } from '@/api/client';
@@ -16,6 +16,7 @@ import {
 } from '@/features/schedule/api';
 import { workoutDeleteDialogCopy } from '@/features/schedule/deleteCopy';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
+import { WorkoutEditSheet } from '@/features/schedule/WorkoutEditSheet';
 import { scheduledDaysSummary } from '@/features/schedule/workoutSummary';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
@@ -36,15 +37,22 @@ function WorkoutRowSkeleton() {
 function WorkoutRow({
   workout,
   summary,
+  onEdit,
   onDelete,
 }: {
   workout: WorkoutRead;
   summary: string;
+  onEdit: (workout: WorkoutRead) => void;
   onDelete: (workout: WorkoutRead) => void;
 }) {
   return (
     <View style={styles.row}>
-      <View style={styles.rowText}>
+      <TouchableOpacity
+        style={styles.rowText}
+        onPress={() => onEdit(workout)}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${workout.name}`}
+      >
         <Text style={styles.name} numberOfLines={1}>
           {workout.name}
         </Text>
@@ -54,7 +62,7 @@ function WorkoutRow({
           </Text>
         ) : null}
         <Text style={styles.summary}>{summary}</Text>
-      </View>
+      </TouchableOpacity>
       <TouchableOpacity
         onPress={() => onDelete(workout)}
         accessibilityRole="button"
@@ -69,6 +77,7 @@ function WorkoutRow({
 export default function WorkoutsScreen() {
   const { planId } = useLocalSearchParams<{ planId: string }>();
   const queryClient = useQueryClient();
+  const [editingWorkout, setEditingWorkout] = useState<WorkoutRead | null>(null);
 
   const workoutsQuery = useWorkouts(planId);
   const entriesQuery = useScheduleEntries(planId);
@@ -171,9 +180,18 @@ export default function WorkoutsScreen() {
           keyExtractor={(workout) => workout.id}
           contentContainerStyle={styles.list}
           renderItem={({ item: workout }) => (
-            <WorkoutRow workout={workout} summary={scheduledDaysSummary(entries, workout.id)} onDelete={confirmDelete} />
+            <WorkoutRow
+              workout={workout}
+              summary={scheduledDaysSummary(entries, workout.id)}
+              onEdit={setEditingWorkout}
+              onDelete={confirmDelete}
+            />
           )}
         />
+      ) : null}
+
+      {editingWorkout ? (
+        <WorkoutEditSheet planId={planId} workout={editingWorkout} onClose={() => setEditingWorkout(null)} />
       ) : null}
     </View>
   );
