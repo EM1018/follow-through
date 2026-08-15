@@ -64,11 +64,14 @@ class ScheduleEntryUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "ScheduleEntryUpdate":
-        # These only catch combinations present in *this* payload - model_fields_set,
-        # not attribute truthiness, because an omitted field and an explicit null both
-        # read as None on the instance. Whether a single field conflicts with the
-        # *existing* row (e.g. day_of_week on an entry that's currently dated) can't be
-        # known here at all; that's the router's job, against the merged row.
+        # These kind-lock checks only catch combinations present in *this*
+        # payload - model_fields_set, not attribute truthiness, because an
+        # omitted field and an explicit null both read as None on the
+        # instance, and even an explicit null alongside the other field is
+        # itself an attempted kind swap here. Whether a single field
+        # conflicts with the *existing* row (e.g. day_of_week on an entry
+        # that's currently dated) can't be known here at all; that's the
+        # router's job, against the merged row.
         fields = self.model_fields_set
 
         if "day_of_week" in fields and "on_date" in fields:
@@ -80,7 +83,12 @@ class ScheduleEntryUpdate(BaseModel):
         if "replaces_entry_id" in fields and "day_of_week" in fields:
             raise ValueError("replaces_entry_id cannot be set together with day_of_week")
 
-        if "name_override" in fields and "workout_id" in fields:
+        # Value-based, unlike the checks above: pairing an explicit null with
+        # a real value (e.g. {"workout_id": <id>, "name_override": null}) is
+        # required to move an entry from one to the other in a single
+        # request, not a conflict - only two genuinely non-null values fighting
+        # over the same slot is.
+        if self.workout_id is not None and self.name_override is not None:
             raise ValueError("name_override cannot be set together with workout_id")
 
         _check_ends_on(self.starts_on, self.ends_on)

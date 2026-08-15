@@ -1289,6 +1289,57 @@ async def test_patch_body_with_name_override_and_workout_id_together_is_422(
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_patch_pairing_workout_id_with_explicit_null_name_override_succeeds(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    """The trap the invariants call out: switching an entry from a typed name
+    to an existing workout requires sending workout_id and name_override:
+    null together. Unlike the previous test, name_override here is null, not
+    another real value, so this is not a conflict - both fields being
+    *present* in the payload isn't itself the problem.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], name_override="Sneaky", day_of_week=1)
+
+    response = await client.patch(
+        f"/plans/{plan['id']}/schedule-entries/{entry['id']}",
+        json={"workout_id": workout["id"], "name_override": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["workout_id"] == workout["id"]
+    assert response.json()["name_override"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_pairing_name_override_with_explicit_null_workout_id_succeeds(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    """The mirror image: switching from a real workout to a typed name."""
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
+
+    response = await client.patch(
+        f"/plans/{plan['id']}/schedule-entries/{entry['id']}",
+        json={"name_override": "Grandma stretches", "workout_id": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name_override"] == "Grandma stretches"
+    assert response.json()["workout_id"] is None
+
+
 # Y. Commit B: mixed day and name-only entries in each applicable state
 
 
