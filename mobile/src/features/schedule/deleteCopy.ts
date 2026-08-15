@@ -112,3 +112,29 @@ export function entryDeleteDialogCopy(
 
   return { title, message, siblings };
 }
+
+/**
+ * Restore and Undo swap are normally confirm-free (see EntryActionsSheet),
+ * but flat chains mean a cancellation or replacement can still pick up
+ * dependents in edge cases -- this is the one guard on either path,
+ * mirroring entryDeleteDialogCopy's dependents copy.
+ */
+export function dependentsGuardDialogCopy(
+  title: string,
+  dependents: ScheduleEntry[],
+  workoutsById: WorkoutsById,
+): DialogCopy {
+  const changeNoun = dependents.length === 1 ? 'change' : 'changes';
+  return {
+    title,
+    message: `This also deletes ${dependents.length} ${changeNoun} you made: ${enumerateEntries(dependents, workoutsById)}.`,
+  };
+}
+
+export function restoreDialogCopy(dependents: ScheduleEntry[], workoutsById: WorkoutsById): DialogCopy {
+  return dependentsGuardDialogCopy('Restore this day?', dependents, workoutsById);
+}
+
+export function undoSwapDialogCopy(dependents: ScheduleEntry[], workoutsById: WorkoutsById): DialogCopy {
+  return dependentsGuardDialogCopy('Undo swap?', dependents, workoutsById);
+}

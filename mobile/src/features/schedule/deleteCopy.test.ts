@@ -1,5 +1,5 @@
 import type { ScheduleEntry, Workout, WorkoutsById } from './blastRadius';
-import { entryDeleteDialogCopy, workoutDeleteDialogCopy } from './deleteCopy';
+import { entryDeleteDialogCopy, restoreDialogCopy, undoSwapDialogCopy, workoutDeleteDialogCopy } from './deleteCopy';
 
 const PLAN_ID = 'plan-1';
 
@@ -135,5 +135,35 @@ describe('entryDeleteDialogCopy', () => {
     const copy = entryDeleteDialogCopy('Push Day', root, [root, swap], workoutsById);
 
     expect(copy.message).toBe('This also deletes 1 change you made: Aug 20 — swapped for Legs.');
+  });
+});
+
+describe('restoreDialogCopy', () => {
+  const workoutsById: WorkoutsById = { legs: makeWorkout('legs', 'Legs') };
+
+  it('titles the confirmation "Restore this day?" and enumerates dependents individually', () => {
+    const dependent = makeEntry('dep', { replaces_entry_id: 'cancellation', workout_id: 'legs', on_date: '2026-08-20' });
+
+    const copy = restoreDialogCopy([dependent], workoutsById);
+
+    expect(copy).toEqual({
+      title: 'Restore this day?',
+      message: 'This also deletes 1 change you made: Aug 20 — swapped for Legs.',
+    });
+  });
+});
+
+describe('undoSwapDialogCopy', () => {
+  const workoutsById: WorkoutsById = { legs: makeWorkout('legs', 'Legs') };
+
+  it('titles the confirmation "Undo swap?" and enumerates dependents individually', () => {
+    const dependent = makeEntry('dep', { replaces_entry_id: 'replacement', workout_id: null, on_date: '2026-08-20' });
+
+    const copy = undoSwapDialogCopy([dependent], workoutsById);
+
+    expect(copy).toEqual({
+      title: 'Undo swap?',
+      message: 'This also deletes 1 change you made: Aug 20 — cancelled.',
+    });
   });
 });

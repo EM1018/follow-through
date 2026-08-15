@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/Skeleton';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { useSchedule, type DaySchedule, type EntryRef, type ResolvedEntry } from './api';
+import type { EntryTarget } from './EntryActionsSheet';
 import { planWindowState, type PlanWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 
@@ -57,12 +58,17 @@ function EntryRow({ entry, onPress }: { entry: ResolvedEntry; onPress: () => voi
   );
 }
 
-function CancelledRow({ target }: { target: EntryRef }) {
+function CancelledRow({ target, onPress }: { target: EntryRef; onPress: () => void }) {
   return (
-    <View style={styles.cancelledRow}>
+    <TouchableOpacity
+      style={styles.cancelledRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Manage ${target.name ?? 'Untitled'}`}
+    >
       <Text style={styles.cancelledName}>{target.name ?? 'Untitled'}</Text>
       <Badge label="Cancelled" variant="muted" />
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -82,7 +88,7 @@ function DayContent({
 }: {
   day: DaySchedule | undefined;
   windowState: PlanWindowState;
-  onEntryPress: (entry: ResolvedEntry) => void;
+  onEntryPress: (target: EntryTarget) => void;
 }) {
   if (windowState === 'before') {
     return <Text style={styles.outOfWindowText}>Before this plan starts</Text>;
@@ -98,10 +104,10 @@ function DayContent({
   return (
     <View style={styles.entryList}>
       {day.entries.map((entry) => (
-        <EntryRow key={entry.entry_id} entry={entry} onPress={() => onEntryPress(entry)} />
+        <EntryRow key={entry.entry_id} entry={entry} onPress={() => onEntryPress({ kind: 'resolved', entry })} />
       ))}
       {day.cancelled.map((target) => (
-        <CancelledRow key={target.entry_id} target={target} />
+        <CancelledRow key={target.entry_id} target={target} onPress={() => onEntryPress({ kind: 'cancelled', target })} />
       ))}
     </View>
   );
@@ -120,7 +126,7 @@ function DayPage({
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
-  onRequestEntryAction: (entry: ResolvedEntry, date: Date) => void;
+  onRequestEntryAction: (target: EntryTarget, date: Date) => void;
 }) {
   const dateParam = format(date, 'yyyy-MM-dd');
   const scheduleQuery = useSchedule(planId, date, date);
@@ -145,7 +151,7 @@ function DayPage({
           <DayContent
             day={day}
             windowState={windowState}
-            onEntryPress={(entry) => onRequestEntryAction(entry, date)}
+            onEntryPress={(target) => onRequestEntryAction(target, date)}
           />
         )}
       </Card>
@@ -182,7 +188,7 @@ export function DayView({
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
-  onRequestEntryAction: (entry: ResolvedEntry, date: Date) => void;
+  onRequestEntryAction: (target: EntryTarget, date: Date) => void;
   width: number;
 }) {
   const offsets = useMemo(() => DAY_OFFSETS, []);

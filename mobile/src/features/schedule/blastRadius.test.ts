@@ -1,16 +1,25 @@
 import {
+  actionsFor,
   dependentsOf,
   describeEntry,
   entriesForWorkout,
   entryDeleteImpact,
+  findCancellationEntry,
+  rootEntryOf,
   siblingWeekdays,
   workoutDeleteImpact,
+  type DaySchedule,
   type ScheduleEntry,
   type Workout,
   type WorkoutsById,
 } from './blastRadius';
 
 const PLAN_ID = 'plan-1';
+
+// actionsFor's day-state branching lives entirely in the tapped entry's own
+// shape (see the function's doc comment) -- this stands in wherever the
+// signature still requires a DaySchedule.
+const DUMMY_DAY: DaySchedule = { status: 'empty', entries: [], cancelled: [] };
 
 function makeEntry(id: string, overrides: Partial<ScheduleEntry> = {}): ScheduleEntry {
   return {
@@ -147,5 +156,100 @@ describe('describeEntry', () => {
   it('falls back to "a deleted workout" rather than a uuid when the workout lookup misses', () => {
     const entry = makeEntry('e1', { replaces_entry_id: 'root', workout_id: 'missing-id' });
     expect(describeEntry(entry, workoutsById)).toBe('swapped for a deleted workout');
+  });
+});
+
+describe('rootEntryOf', () => {
+  it('returns the entry itself when it is already a root', () => {
+    const root = makeEntry('root');
+    expect(rootEntryOf([root], root)).toBe(root);
+  });
+
+  it('walks one hop up a flat replacement', () => {
+    const root = makeEntry('root');
+    const replacement = makeEntry('replacement', { replaces_entry_id: 'root', workout_id: 'w1' });
+    expect(rootEntryOf([root, replacement], replacement)).toBe(root);
+  });
+
+  it('walks a multi-hop chain all the way to the root', () => {
+    const root = makeEntry('root');
+    const d1 = makeEntry('d1', { replaces_entry_id: 'root', workout_id: 'w1' });
+    const d2 = makeEntry('d2', { replaces_entry_id: 'd1', workout_id: 'w2' });
+    expect(rootEntryOf([root, d1, d2], d2)).toBe(root);
+  });
+
+  it('terminates on a malformed cycle instead of hanging, stopping at the first revisit', () => {
+    const a = makeEntry('a', { replaces_entry_id: 'b' });
+    const b = makeEntry('b', { replaces_entry_id: 'a' });
+    expect(rootEntryOf([a, b], a)).toBe(b);
+  });
+
+  it('walks from a cancellation to its root the same way it walks from a replacement -- this is what makes swap-from-cancelled point at the root, not the cancellation', () => {
+    const root = makeEntry('root', { day_of_week: 1, workout_id: 'w1' });
+    const cancellation = makeEntry('cancellation', {
+      on_date: '2026-08-18',
+      replaces_entry_id: 'root',
+      workout_id: null,
+      name_override: null,
+    });
+    expect(rootEntryOf([root, cancellation], cancellation)).toBe(root);
+  });
+});
+
+describe('findCancellationEntry', () => {
+  it('finds the dated row that cancels the target on that date', () => {
+    const root = makeEntry('root', { day_of_week: 1 });
+    const cancellation = makeEntry('cancellation', {
+      on_date: '2026-08-18',
+      replaces_entry_id: 'root',
+      workout_id: null,
+      name_override: null,
+    });
+    expect(findCancellationEntry([root, cancellation], '2026-08-18', 'root')).toBe(cancellation);
+  });
+
+  it('does not match a replacement row for the same target and date', () => {
+    const root = makeEntry('root', { day_of_week: 1 });
+    const replacement = makeEntry('replacement', {
+      on_date: '2026-08-18',
+      replaces_entry_id: 'root',
+      workout_id: 'w1',
+    });
+    expect(findCancellationEntry([root, replacement], '2026-08-18', 'root')).toBeUndefined();
+  });
+
+  it('returns undefined when nothing matches', () => {
+    expect(findCancellationEntry([], '2026-08-18', 'root')).toBeUndefined();
+  });
+});
+
+describe('actionsFor', () => {
+  it('offers cancel, swap, delete-every-weekday for a scheduled recurring occurrence', () => {
+    const entry = makeEntry('root', { day_of_week: 1, workout_id: 'w1' });
+    expect(actionsFor(DUMMY_DAY, entry)).toEqual(['cancel', 'swap', 'delete']);
+  });
+
+  it('offers swap, delete-this-day for a scheduled dated one-off (no cancel)', () => {
+    const entry = makeEntry('root', { on_date: '2026-08-18', workout_id: 'w1' });
+    expect(actionsFor(DUMMY_DAY, entry)).toEqual(['swap', 'delete']);
+  });
+
+  it('offers restore, swap for a cancellation', () => {
+    const cancellation = makeEntry('cancellation', {
+      on_date: '2026-08-18',
+      replaces_entry_id: 'root',
+      workout_id: null,
+      name_override: null,
+    });
+    expect(actionsFor(DUMMY_DAY, cancellation)).toEqual(['restore', 'swap']);
+  });
+
+  it('offers change swap, undo swap, cancel for a replacement', () => {
+    const replacement = makeEntry('replacement', {
+      on_date: '2026-08-18',
+      replaces_entry_id: 'root',
+      workout_id: 'w1',
+    });
+    expect(actionsFor(DUMMY_DAY, replacement)).toEqual(['changeSwap', 'undoSwap', 'cancel']);
   });
 });

@@ -33,3 +33,21 @@ export function buildEntryPayloads(workoutId: string, form: WorkoutFormState): S
     ...(endsOn ? { ends_on: endsOn } : {}),
   }));
 }
+
+/**
+ * A dated cancellation against `rootEntryId` -- no workout_id, no
+ * name_override, no day_of_week/bounds. Always points at the root, never at
+ * whatever it's superseding, so a cancel-after-swap can't deepen the chain.
+ */
+export function cancellationPayload(rootEntryId: string, dateParam: string): ScheduleEntryCreate {
+  return { on_date: dateParam, replaces_entry_id: rootEntryId };
+}
+
+/**
+ * A dated replacement against `rootEntryId` for `workoutId` -- no
+ * name_override, no day_of_week/bounds. Always points at the root, never at
+ * whatever it's superseding (see cancellationPayload).
+ */
+export function replacementPayload(rootEntryId: string, dateParam: string, workoutId: string): ScheduleEntryCreate {
+  return { on_date: dateParam, replaces_entry_id: rootEntryId, workout_id: workoutId };
+}

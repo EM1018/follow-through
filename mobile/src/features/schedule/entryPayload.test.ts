@@ -1,4 +1,4 @@
-import { buildEntryPayloads } from './entryPayload';
+import { buildEntryPayloads, cancellationPayload, replacementPayload } from './entryPayload';
 
 const WORKOUT_ID = 'workout-1';
 
@@ -76,5 +76,30 @@ describe('buildEntryPayloads', () => {
       endingOn: null,
     });
     expect(withoutEnd[0]).not.toHaveProperty('ends_on');
+  });
+});
+
+describe('cancellationPayload', () => {
+  it('is dated, points at the root, and carries no workout, name_override, or bounds', () => {
+    const payload = cancellationPayload('root-1', '2026-08-18');
+
+    expect(payload).toEqual({ on_date: '2026-08-18', replaces_entry_id: 'root-1' });
+    expect(payload).not.toHaveProperty('day_of_week');
+    expect(payload).not.toHaveProperty('starts_on');
+    expect(payload).not.toHaveProperty('ends_on');
+    expect(payload).not.toHaveProperty('workout_id');
+    expect(payload).not.toHaveProperty('name_override');
+  });
+});
+
+describe('replacementPayload', () => {
+  it('is dated, points at the root, carries the workout, and no name_override or bounds', () => {
+    const payload = replacementPayload('root-1', '2026-08-18', 'workout-1');
+
+    expect(payload).toEqual({ on_date: '2026-08-18', replaces_entry_id: 'root-1', workout_id: 'workout-1' });
+    expect(payload).not.toHaveProperty('day_of_week');
+    expect(payload).not.toHaveProperty('starts_on');
+    expect(payload).not.toHaveProperty('ends_on');
+    expect(payload).not.toHaveProperty('name_override');
   });
 });

@@ -22,9 +22,8 @@ import { PageDots } from '@/components/PageDots';
 import { Screen } from '@/components/Screen';
 import { buildPlanStack, type PlanRead, type PlanStackItem } from '@/features/home/planStack';
 import { AddWorkoutModal } from '@/features/schedule/AddWorkoutModal';
-import type { ResolvedEntry } from '@/features/schedule/api';
 import { DayView } from '@/features/schedule/DayView';
-import { EntryActionsSheet } from '@/features/schedule/EntryActionsSheet';
+import { EntryActionsSheet, type EntryTarget } from '@/features/schedule/EntryActionsSheet';
 import { MonthView } from '@/features/schedule/MonthView';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
 import { ViewModeControl } from '@/features/schedule/ViewModeControl';
@@ -82,7 +81,7 @@ function CalendarArea({
   const [width, setWidth] = useState(0);
   const [focusedDate, setFocusedDate] = useState(today);
   const [addModalDate, setAddModalDate] = useState<Date | null>(null);
-  const [entryAction, setEntryAction] = useState<{ entry: ResolvedEntry; date: Date } | null>(null);
+  const [entryAction, setEntryAction] = useState<{ target: EntryTarget; date: Date } | null>(null);
 
   const onLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -105,7 +104,7 @@ function CalendarArea({
   const closeAddModal = useCallback(() => setAddModalDate(null), []);
 
   const onRequestEntryAction = useCallback(
-    (entry: ResolvedEntry, date: Date) => setEntryAction({ entry, date }),
+    (target: EntryTarget, date: Date) => setEntryAction({ target, date }),
     [],
   );
   const closeEntryAction = useCallback(() => setEntryAction(null), []);
@@ -157,7 +156,7 @@ function CalendarArea({
         <EntryActionsSheet
           planId={planId}
           date={entryAction.date}
-          entry={entryAction.entry}
+          target={entryAction.target}
           onClose={closeEntryAction}
         />
       ) : null}

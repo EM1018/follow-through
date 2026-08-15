@@ -4,8 +4,11 @@ import type { components } from '@/api/schema';
 import { parseDateOnly } from '@/lib/dates';
 
 export type ScheduleEntry = components['schemas']['ScheduleEntryRead'];
+export type DaySchedule = components['schemas']['DayScheduleRead'];
 export type Workout = components['schemas']['WorkoutRead'];
 export type WorkoutsById = Record<string, Workout>;
+
+export type Action = 'cancel' | 'restore' | 'swap' | 'changeSwap' | 'undoSwap' | 'delete';
 
 export const WEEKDAY_NAMES: Record<number, string> = {
   1: 'Monday',
@@ -81,6 +84,70 @@ export function entryDeleteImpact(
 ): { root: ScheduleEntry | undefined; dependents: ScheduleEntry[] } {
   const root = entries.find((entry) => entry.id === entryId);
   return { root, dependents: dependentsOf(entries, entryId) };
+}
+
+/**
+ * Walks replaces_entry_id upward to the entry that replaces nothing. Returns
+ * entry itself if it's already a root. Cycle-safe: a visited set stops a
+ * malformed loop from spinning forever, returning wherever the walk gave up.
+ */
+export function rootEntryOf(entries: ScheduleEntry[], entry: ScheduleEntry): ScheduleEntry {
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const visited = new Set<string>([entry.id]);
+  let current = entry;
+
+  while (current.replaces_entry_id !== null) {
+    const parent = byId.get(current.replaces_entry_id);
+    if (!parent || visited.has(parent.id)) {
+      return current;
+    }
+    visited.add(parent.id);
+    current = parent;
+  }
+
+  return current;
+}
+
+/**
+ * The dated row standing in for a cancellation on `dateParam` against
+ * `targetEntryId` -- what DayScheduleRead.cancelled can't give us directly,
+ * since EntryRefRead only carries the cancelled target's id and name, never
+ * the cancellation row's own id. Matches the backend's _is_cancellation
+ * predicate (app/services/resolution.py): replaces_entry_id set, no
+ * workout_id, no name_override.
+ */
+export function findCancellationEntry(
+  entries: ScheduleEntry[],
+  dateParam: string,
+  targetEntryId: string,
+): ScheduleEntry | undefined {
+  return entries.find(
+    (entry) =>
+      entry.on_date === dateParam &&
+      entry.replaces_entry_id === targetEntryId &&
+      entry.workout_id === null &&
+      entry.name_override === null,
+  );
+}
+
+/**
+ * The ordered action list for the entry-actions sheet, keyed off the shape of
+ * the specific entry that was tapped rather than day.status: DayStatus is a
+ * day-wide summary (SUBSTITUTED only means *some* surviving entry that day is
+ * a substitution) and branching on it for a single row's actions would
+ * misclassify a mixed day. A tapped entry's own fields are unambiguous:
+ * replaces_entry_id null is always a root (recurring or dated one-off); a
+ * non-null replaces_entry_id with no workout_id is always a cancellation;
+ * with a workout_id it's always a replacement. `day` is accepted to match the
+ * sheet's other call sites and for future use, not because the switch needs it.
+ */
+export function actionsFor(_day: DaySchedule, entry: ScheduleEntry): Action[] {
+  if (entry.replaces_entry_id === null) {
+    return entry.day_of_week !== null ? ['cancel', 'swap', 'delete'] : ['swap', 'delete'];
+  }
+
+  const isCancellation = entry.workout_id === null && entry.name_override === null;
+  return isCancellation ? ['restore', 'swap'] : ['changeSwap', 'undoSwap', 'cancel'];
 }
 
 /**
