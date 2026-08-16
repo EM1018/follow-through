@@ -12,9 +12,11 @@ import {
 } from 'react-native';
 
 import { Skeleton } from '@/components/Skeleton';
-import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
+import { WeekItem } from '@/components/WeekItem';
+import { colors, fontSize, fontWeight, minRowHeight, radius, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
+import type { EntryTarget } from './EntryActionsSheet';
 import { planWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 import { WEEK_OFFSETS, WEEK_WINDOW, weekDates, weekStartFor } from './week';
@@ -28,6 +30,7 @@ function WeekCell({
   planStartsOn,
   planEndsOn,
   onRequestAdd,
+  onEntryPress,
 }: {
   date: Date;
   day: DaySchedule | undefined;
@@ -35,43 +38,55 @@ function WeekCell({
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
+  onEntryPress: (target: EntryTarget) => void;
 }) {
   const today = isToday(date);
   const isOutOfWindow = planWindowState(date, planStartsOn, planEndsOn) !== 'within';
+  const entries = day?.entries ?? [];
+  const cancelled = day?.cancelled ?? [];
+  const isEmpty = entries.length === 0 && cancelled.length === 0;
 
   return (
     <View style={[styles.cell, today && styles.cellToday, isOutOfWindow && styles.cellOutOfWindow]}>
       <Text style={[styles.cellDate, today && styles.cellDateToday]}>{format(date, 'd')}</Text>
       {isLoading ? (
         <Skeleton style={styles.cellSkeleton} />
-      ) : isOutOfWindow ? null : (
-        <View style={styles.cellEntries}>
-          {(day?.entries ?? []).map((entry) => (
-            <Text
-              key={entry.entry_id}
-              style={entry.status === 'substituted' ? styles.cellNameSubstituted : styles.cellNameScheduled}
-              numberOfLines={2}
-            >
-              {entry.status === 'substituted' ? `⇄ ${entry.name ?? 'Untitled'}` : (entry.name ?? 'Untitled')}
-            </Text>
-          ))}
-          {(day?.cancelled ?? []).map((target) => (
-            <Text key={target.entry_id} style={styles.cellNameCancelled} numberOfLines={2}>
-              {target.name ?? 'Untitled'}
-            </Text>
-          ))}
-        </View>
-      )}
-
-      {isOutOfWindow ? null : (
+      ) : isOutOfWindow ? null : isEmpty ? (
         <TouchableOpacity
-          style={styles.cellAddButton}
+          style={styles.emptyColumn}
           onPress={() => onRequestAdd(date)}
           accessibilityRole="button"
           accessibilityLabel="Add workout"
         >
-          <Text style={styles.cellAddButtonIcon}>⊕</Text>
+          <Text style={styles.emptyColumnIcon}>⊕</Text>
         </TouchableOpacity>
+      ) : (
+        <View style={styles.cellEntries}>
+          {entries.map((entry) => (
+            <WeekItem
+              key={entry.entry_id}
+              state={entry.status}
+              name={entry.name ?? 'Untitled'}
+              onPress={() => onEntryPress({ kind: 'resolved', entry })}
+            />
+          ))}
+          {cancelled.map((target) => (
+            <WeekItem
+              key={target.entry_id}
+              state="cancelled"
+              name={target.name ?? 'Untitled'}
+              onPress={() => onEntryPress({ kind: 'cancelled', target })}
+            />
+          ))}
+          <TouchableOpacity
+            style={styles.cellAddButton}
+            onPress={() => onRequestAdd(date)}
+            accessibilityRole="button"
+            accessibilityLabel="Add workout"
+          >
+            <Text style={styles.cellAddButtonIcon}>⊕</Text>
+          </TouchableOpacity>
+        </View>
       )}
     </View>
   );
@@ -83,12 +98,14 @@ function WeekPage({
   planStartsOn,
   planEndsOn,
   onRequestAdd,
+  onRequestEntryAction,
 }: {
   planId: string;
   weekStart: Date;
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
+  onRequestEntryAction: (target: EntryTarget, date: Date) => void;
 }) {
   const weekEnd = addDays(weekStart, 6);
   const scheduleQuery = useSchedule(planId, weekStart, weekEnd);
@@ -116,6 +133,7 @@ function WeekPage({
               planStartsOn={planStartsOn}
               planEndsOn={planEndsOn}
               onRequestAdd={onRequestAdd}
+              onEntryPress={(target) => onRequestEntryAction(target, date)}
             />
           );
         })}
@@ -134,6 +152,7 @@ export function WeekView({
   planStartsOn,
   planEndsOn,
   onRequestAdd,
+  onRequestEntryAction,
   width,
 }: {
   planId: string;
@@ -143,6 +162,7 @@ export function WeekView({
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
+  onRequestEntryAction: (target: EntryTarget, date: Date) => void;
   width: number;
 }) {
   const queryClient = useQueryClient();
@@ -205,10 +225,11 @@ export function WeekView({
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={onRequestAdd}
+          onRequestEntryAction={onRequestEntryAction}
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd],
+    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
   );
 
   return (
@@ -229,7 +250,6 @@ export function WeekView({
 
 const styles = StyleSheet.create({
   weekPage: {
-    flex: 1,
     gap: spacing.xs,
   },
   headerRow: {
@@ -245,13 +265,17 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.semibold,
     color: colors.textMuted,
   },
+  // No flex:1 here (or on `cell`'s height) -- removing the forced full-screen
+  // stretch is what lets columns size to their tallest sibling instead of the
+  // screen. Row children still equalize height via the default cross-axis
+  // stretch; `cell`'s own minHeight is the floor for an empty day.
   gridRow: {
-    flex: 1,
     flexDirection: 'row',
     gap: spacing.xs,
   },
   cell: {
     flex: 1,
+    minHeight: minRowHeight.week * 2,
     borderRadius: radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
@@ -265,10 +289,18 @@ const styles = StyleSheet.create({
   cellOutOfWindow: {
     backgroundColor: colors.surfaceMuted,
   },
+  emptyColumn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyColumnIcon: {
+    fontSize: fontSize.sm,
+    color: colors.accent,
+  },
   cellAddButton: {
-    position: 'absolute',
-    right: spacing.xs,
-    bottom: spacing.xs,
+    alignSelf: 'center',
+    paddingTop: spacing.xs,
   },
   cellAddButtonIcon: {
     fontSize: fontSize.sm,
@@ -289,20 +321,5 @@ const styles = StyleSheet.create({
   cellDateToday: {
     color: colors.accent,
     fontWeight: fontWeight.bold,
-  },
-  cellNameScheduled: {
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.medium,
-    color: colors.accent,
-  },
-  cellNameSubstituted: {
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.medium,
-    color: colors.text,
-  },
-  cellNameCancelled: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    textDecorationLine: 'line-through',
   },
 });

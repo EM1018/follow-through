@@ -133,6 +133,7 @@ function CalendarArea({
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={setAddModalDate}
+          onRequestEntryAction={onRequestEntryAction}
           width={width}
         />
       ) : null}

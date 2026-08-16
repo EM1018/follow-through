@@ -32,6 +32,7 @@ import {
 import { entryDeleteDialogCopy, restoreDialogCopy, undoSwapDialogCopy } from './deleteCopy';
 import { EditScheduleSheet } from './EditScheduleSheet';
 import { cancellationPayload, replacementPayload, type ScheduleEntryCreate } from './entryPayload';
+import { visibleNotes } from './notes';
 import { applyOptimisticCancel } from './scheduleCache';
 import { changeToExistingWorkoutPatch, changeToNewNamePatch, patchThenClearStranded, stopRepeatingPatch } from './scheduleEdit';
 import { changeWorkoutConfirmCopy, stopRepeatingConfirmCopy, stopRepeatingFailureMessage } from './scheduleEditCopy';
@@ -154,6 +155,7 @@ export function EntryActionsSheet({
 
   const displayName = target.kind === 'cancelled' ? target.target.name : target.entry.name;
   const workoutName = displayName ?? 'a deleted workout';
+  const notes = target.kind === 'cancelled' ? null : visibleNotes(target.entry.notes);
 
   const invalidateAndClose = () => {
     invalidatePlanScheduleData(queryClient, planId);
@@ -618,6 +620,7 @@ export function EntryActionsSheet({
           <Card style={styles.sheet}>
             <Text style={styles.title}>{workoutName}</Text>
             <Text style={styles.subtitle}>{format(date, 'EEEE, MMMM d')}</Text>
+            {notes ? <Text style={styles.notesText}>{notes}</Text> : null}
 
             <View style={styles.divider} />
 
@@ -680,6 +683,11 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   subtitle: {
+    fontSize: fontSize.sm,
+    color: colors.textMuted,
+  },
+  notesText: {
+    marginTop: spacing.sm,
     fontSize: fontSize.sm,
     color: colors.textMuted,
   },

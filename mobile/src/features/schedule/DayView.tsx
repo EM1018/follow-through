@@ -12,10 +12,11 @@ import {
 
 import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
+import { DayItem } from '@/components/DayItem';
 import { Skeleton } from '@/components/Skeleton';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
-import { useSchedule, type DaySchedule, type EntryRef, type ResolvedEntry } from './api';
+import { useSchedule, type DaySchedule } from './api';
 import type { EntryTarget } from './EntryActionsSheet';
 import { planWindowState, type PlanWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
@@ -26,57 +27,20 @@ import { ScheduleErrorState } from './ScheduleErrorState';
 const DAY_WINDOW = 180;
 const DAY_OFFSETS = Array.from({ length: DAY_WINDOW * 2 + 1 }, (_, i) => i - DAY_WINDOW);
 
-function EntryRow({ entry, onPress }: { entry: ResolvedEntry; onPress: () => void }) {
-  if (entry.status === 'substituted') {
-    return (
-      <TouchableOpacity
-        style={styles.entryRow}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`Manage ${entry.name ?? 'Untitled'}`}
-      >
-        <View style={styles.substitutedHeader}>
-          <Text style={styles.swapIcon}>⇄</Text>
-          <Text style={styles.substitutedName}>{entry.name ?? 'Untitled'}</Text>
-        </View>
-        {entry.replaced ? (
-          <Text style={styles.replacedText}>replaced {entry.replaced.name ?? 'Untitled'}</Text>
-        ) : null}
-      </TouchableOpacity>
-    );
-  }
-
-  return (
-    <TouchableOpacity
-      style={styles.entryRow}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Manage ${entry.name ?? 'Untitled'}`}
-    >
-      <Text style={styles.scheduledName}>{entry.name ?? 'Untitled'}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function CancelledRow({ target, onPress }: { target: EntryRef; onPress: () => void }) {
-  return (
-    <TouchableOpacity
-      style={styles.cancelledRow}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Manage ${target.name ?? 'Untitled'}`}
-    >
-      <Text style={styles.cancelledName}>{target.name ?? 'Untitled'}</Text>
-      <Badge label="Cancelled" variant="muted" />
-    </TouchableOpacity>
-  );
-}
-
 function DaySkeleton() {
   return (
     <View style={styles.entryList}>
       <Skeleton style={styles.skeletonLineWide} />
       <Skeleton style={styles.skeletonLineNarrow} />
+    </View>
+  );
+}
+
+function EmptyDay() {
+  return (
+    <View style={styles.emptyState}>
+      <Text style={styles.emptyText}>Nothing scheduled</Text>
+      <Text style={styles.emptyHint}>Tap ⊕ to add a workout</Text>
     </View>
   );
 }
@@ -91,23 +55,43 @@ function DayContent({
   onEntryPress: (target: EntryTarget) => void;
 }) {
   if (windowState === 'before') {
-    return <Text style={styles.outOfWindowText}>Before this plan starts</Text>;
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.outOfWindowText}>Before this plan starts</Text>
+      </View>
+    );
   }
   if (windowState === 'after') {
-    return <Text style={styles.outOfWindowText}>After this plan ended</Text>;
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.outOfWindowText}>After this plan ended</Text>
+      </View>
+    );
   }
 
   if (!day || (day.entries.length === 0 && day.cancelled.length === 0)) {
-    return <Text style={styles.emptyText}>Nothing scheduled</Text>;
+    return <EmptyDay />;
   }
 
   return (
     <View style={styles.entryList}>
       {day.entries.map((entry) => (
-        <EntryRow key={entry.entry_id} entry={entry} onPress={() => onEntryPress({ kind: 'resolved', entry })} />
+        <DayItem
+          key={entry.entry_id}
+          state={entry.status}
+          name={entry.name ?? 'Untitled'}
+          notes={entry.notes}
+          replacedName={entry.replaced?.name}
+          onPress={() => onEntryPress({ kind: 'resolved', entry })}
+        />
       ))}
       {day.cancelled.map((target) => (
-        <CancelledRow key={target.entry_id} target={target} onPress={() => onEntryPress({ kind: 'cancelled', target })} />
+        <DayItem
+          key={target.entry_id}
+          state="cancelled"
+          name={target.name ?? 'Untitled'}
+          onPress={() => onEntryPress({ kind: 'cancelled', target })}
+        />
       ))}
     </View>
   );
@@ -275,7 +259,10 @@ const styles = StyleSheet.create({
   },
   dayCard: {
     flex: 1,
-    justifyContent: 'center',
+    // Rows anchor from the top (see entryList); this bottom padding is what
+    // keeps the last one from sitting under the FAB, which floats past the
+    // card's own edge.
+    paddingBottom: spacing.xl * 2,
   },
   addButton: {
     position: 'absolute',
@@ -292,8 +279,19 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     color: colors.background,
   },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
   emptyText: {
     fontSize: fontSize.md,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  emptyHint: {
+    fontSize: fontSize.sm,
     color: colors.textMuted,
     textAlign: 'center',
   },
@@ -304,7 +302,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   entryList: {
-    gap: spacing.lg,
+    gap: spacing.sm,
   },
   skeletonLineWide: {
     alignSelf: 'center',
@@ -315,43 +313,5 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     height: fontSize.sm,
     width: '40%',
-  },
-  entryRow: {
-    gap: spacing.xs,
-  },
-  cancelledRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  scheduledName: {
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
-    color: colors.accent,
-  },
-  substitutedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  swapIcon: {
-    fontSize: fontSize.md,
-    color: colors.accent,
-  },
-  substitutedName: {
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
-    color: colors.text,
-  },
-  replacedText: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
-  },
-  cancelledName: {
-    flexShrink: 1,
-    fontSize: fontSize.md,
-    color: colors.textMuted,
-    textDecorationLine: 'line-through',
   },
 });
