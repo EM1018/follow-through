@@ -80,3 +80,15 @@ ACTIVITY_UNITS: dict[Activity, ActivityUnits] = {
         default=Unit.SESSIONS,
     ),
 }
+
+
+DISPLAY_NAMES: dict[Activity, str] = {
+    Activity.RUNNING: "Running",
+    Activity.WALKING: "Walking",
+    Activity.CYCLING: "Cycling",
+    Activity.SWIMMING: "Swimming",
+    Activity.STRENGTH_TRAINING: "Strength training",
+    Activity.CARDIO: "Cardio",
+    Activity.STRETCHING_MOBILITY: "Stretching/mobility",
+    Activity.OTHER: "Other",
+}

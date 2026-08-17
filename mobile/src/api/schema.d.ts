@@ -4,6 +4,63 @@
  */
 
 export interface paths {
+    "/activities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Activities
+         * @description Static vocabulary, read straight off app/services/activities.py - no
+         *     database access, so nothing here can drift from what POST /completions
+         *     and the CHECK constraints actually enforce.
+         */
+        get: operations["list_activities_activities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Completion */
+        post: operations["create_completion_completions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/completions/{completion_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Completion */
+        delete: operations["delete_completion_completions__completion_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Completion */
+        patch: operations["update_completion_completions__completion_id__patch"];
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -168,6 +225,79 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivitiesResponse */
+        ActivitiesResponse: {
+            /** Activities */
+            activities: components["schemas"]["ActivityInfo"][];
+            /** Units */
+            units: components["schemas"]["UnitInfo"][];
+        };
+        /**
+         * Activity
+         * @enum {string}
+         */
+        Activity: "running" | "walking" | "cycling" | "swimming" | "strength_training" | "cardio" | "stretching_mobility" | "other";
+        /** ActivityInfo */
+        ActivityInfo: {
+            activity: components["schemas"]["Activity"];
+            default_unit: components["schemas"]["Unit"];
+            /** Display Name */
+            display_name: string;
+            /** Units */
+            units: components["schemas"]["Unit"][];
+        };
+        /** CompletionCreate */
+        CompletionCreate: {
+            activity?: components["schemas"]["Activity"] | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Schedule Entry Id */
+            schedule_entry_id?: string | null;
+            unit?: components["schemas"]["Unit"] | null;
+            /** Value */
+            value?: number | string | null;
+        };
+        /** CompletionRead */
+        CompletionRead: {
+            activity: components["schemas"]["Activity"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string | null;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Schedule Entry Id */
+            schedule_entry_id: string | null;
+            unit: components["schemas"]["Unit"] | null;
+            /** Value */
+            value: string | null;
+        };
+        /** CompletionUpdate */
+        CompletionUpdate: {
+            /** Note */
+            note?: string | null;
+            unit?: components["schemas"]["Unit"] | null;
+            /** Value */
+            value?: number | string | null;
+        };
         /**
          * DayScheduleRead
          * @description No `date` field - the date is already the key this value sits under in
@@ -195,6 +325,11 @@ export interface components {
          * @enum {string}
          */
         DayStatus: "empty" | "scheduled" | "cancelled" | "substituted";
+        /**
+         * Dimension
+         * @enum {string}
+         */
+        Dimension: "time" | "distance" | "count";
         /**
          * EntryRefRead
          * @description Minimal reference to another entry - used both for what a substitution
@@ -377,6 +512,16 @@ export interface components {
                 [key: string]: components["schemas"]["DayScheduleRead"];
             };
         };
+        /**
+         * Unit
+         * @enum {string}
+         */
+        Unit: "minutes" | "hours" | "miles" | "kilometers" | "sessions" | "sets" | "reps";
+        /** UnitInfo */
+        UnitInfo: {
+            dimension: components["schemas"]["Dimension"];
+            unit: components["schemas"]["Unit"];
+        };
         /** User */
         User: {
             /**
@@ -409,6 +554,7 @@ export interface components {
         };
         /** WorkoutCreate */
         WorkoutCreate: {
+            activity?: components["schemas"]["Activity"] | null;
             /** Name */
             name: string;
             /** Notes */
@@ -416,6 +562,7 @@ export interface components {
         };
         /** WorkoutRead */
         WorkoutRead: {
+            activity: components["schemas"]["Activity"] | null;
             /**
              * Created At
              * Format: date-time
@@ -438,6 +585,7 @@ export interface components {
         };
         /** WorkoutUpdate */
         WorkoutUpdate: {
+            activity?: components["schemas"]["Activity"] | null;
             /** Name */
             name?: string | null;
             /** Notes */
@@ -452,6 +600,123 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_activities_activities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivitiesResponse"];
+                };
+            };
+        };
+    };
+    create_completion_completions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompletionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_completion_completions__completion_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                completion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_completion_completions__completion_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                completion_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompletionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;

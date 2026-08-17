@@ -308,6 +308,83 @@ async def test_create_workout_with_too_long_name_is_422(
 
 
 @pytest.mark.asyncio
+async def test_create_workout_with_activity_is_persisted(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+
+    response = await client.post(
+        f"/plans/{plan['id']}/workouts",
+        json={"name": "Leg Day", "activity": "strength_training"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] == "strength_training"
+
+
+@pytest.mark.asyncio
+async def test_create_workout_without_activity_is_null(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+
+    response = await client.post(f"/plans/{plan['id']}/workouts", json={"name": "Leg Day"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_onto_existing_workout(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_workout: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    assert workout["activity"] is None
+
+    response = await client.patch(
+        f"/plans/{plan['id']}/workouts/{workout['id']}", json={"activity": "cycling"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["activity"] == "cycling"
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_back_to_null(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_workout: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"], activity="cycling")
+    assert workout["activity"] == "cycling"
+
+    response = await client.patch(
+        f"/plans/{plan['id']}/workouts/{workout['id']}", json={"activity": None}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["activity"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_workout_with_invalid_activity_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+
+    response = await client.post(
+        f"/plans/{plan['id']}/workouts", json={"name": "Leg Day", "activity": "teleporting"}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_unauthenticated_requests_are_401(client: AsyncClient) -> None:
     fake_plan_id = uuid4()
     fake_workout_id = uuid4()

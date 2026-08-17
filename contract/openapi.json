@@ -1,6 +1,282 @@
 {
   "components": {
     "schemas": {
+      "ActivitiesResponse": {
+        "properties": {
+          "activities": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityInfo"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/UnitInfo"
+            },
+            "title": "Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "activities",
+          "units"
+        ],
+        "title": "ActivitiesResponse",
+        "type": "object"
+      },
+      "Activity": {
+        "enum": [
+          "running",
+          "walking",
+          "cycling",
+          "swimming",
+          "strength_training",
+          "cardio",
+          "stretching_mobility",
+          "other"
+        ],
+        "title": "Activity",
+        "type": "string"
+      },
+      "ActivityInfo": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Activity"
+          },
+          "default_unit": {
+            "$ref": "#/components/schemas/Unit"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/Unit"
+            },
+            "title": "Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "activity",
+          "display_name",
+          "units",
+          "default_unit"
+        ],
+        "title": "ActivityInfo",
+        "type": "object"
+      },
+      "CompletionCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Activity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "on_date": {
+            "format": "date",
+            "title": "On Date",
+            "type": "string"
+          },
+          "schedule_entry_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Entry Id"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "on_date"
+        ],
+        "title": "CompletionCreate",
+        "type": "object"
+      },
+      "CompletionRead": {
+        "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Activity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "on_date": {
+            "format": "date",
+            "title": "On Date",
+            "type": "string"
+          },
+          "schedule_entry_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Entry Id"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "activity",
+          "value",
+          "unit",
+          "on_date",
+          "schedule_entry_id",
+          "label",
+          "note",
+          "created_at"
+        ],
+        "title": "CompletionRead",
+        "type": "object"
+      },
+      "CompletionUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "CompletionUpdate",
+        "type": "object"
+      },
       "DayScheduleRead": {
         "description": "No `date` field - the date is already the key this value sits under in\nScheduleResponse.days, so it isn't duplicated here.",
         "properties": {
@@ -39,6 +315,15 @@
           "substituted"
         ],
         "title": "DayStatus",
+        "type": "string"
+      },
+      "Dimension": {
+        "enum": [
+          "time",
+          "distance",
+          "count"
+        ],
+        "title": "Dimension",
         "type": "string"
       },
       "EntryRefRead": {
@@ -642,6 +927,35 @@
         "title": "ScheduleResponse",
         "type": "object"
       },
+      "Unit": {
+        "enum": [
+          "minutes",
+          "hours",
+          "miles",
+          "kilometers",
+          "sessions",
+          "sets",
+          "reps"
+        ],
+        "title": "Unit",
+        "type": "string"
+      },
+      "UnitInfo": {
+        "properties": {
+          "dimension": {
+            "$ref": "#/components/schemas/Dimension"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/Unit"
+          }
+        },
+        "required": [
+          "unit",
+          "dimension"
+        ],
+        "title": "UnitInfo",
+        "type": "object"
+      },
       "User": {
         "properties": {
           "created_at": {
@@ -721,6 +1035,16 @@
       "WorkoutCreate": {
         "additionalProperties": false,
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Activity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "maxLength": 100,
             "minLength": 1,
@@ -747,6 +1071,16 @@
       },
       "WorkoutRead": {
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Activity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -783,6 +1117,7 @@
           "plan_id",
           "name",
           "notes",
+          "activity",
           "created_at"
         ],
         "title": "WorkoutRead",
@@ -791,6 +1126,16 @@
       "WorkoutUpdate": {
         "additionalProperties": false,
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Activity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "anyOf": [
               {
@@ -833,6 +1178,176 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/activities": {
+      "get": {
+        "description": "Static vocabulary, read straight off app/services/activities.py - no\ndatabase access, so nothing here can drift from what POST /completions\nand the CHECK constraints actually enforce.",
+        "operationId": "list_activities_activities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Activities",
+        "tags": [
+          "activities"
+        ]
+      }
+    },
+    "/completions": {
+      "post": {
+        "operationId": "create_completion_completions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompletionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Completion",
+        "tags": [
+          "completions"
+        ]
+      }
+    },
+    "/completions/{completion_id}": {
+      "delete": {
+        "operationId": "delete_completion_completions__completion_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "completion_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Completion Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Completion",
+        "tags": [
+          "completions"
+        ]
+      },
+      "patch": {
+        "operationId": "update_completion_completions__completion_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "completion_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Completion Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompletionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Completion",
+        "tags": [
+          "completions"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health_health_get",
