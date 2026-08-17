@@ -180,14 +180,15 @@ async def test_patch_starts_on_after_existing_ends_on_is_422(
         json={
             "workout_id": workout["id"],
             "day_of_week": 1,
-            "starts_on": "2026-08-15",
-            "ends_on": "2026-08-24",
+            "starts_on": plan["starts_on"],
+            "ends_on": _days_after(plan["starts_on"], 9),
         },
     )
     entry_id = created.json()["id"]
 
     response = await client.patch(
-        f"/plans/{plan['id']}/schedule-entries/{entry_id}", json={"starts_on": "2026-09-03"}
+        f"/plans/{plan['id']}/schedule-entries/{entry_id}",
+        json={"starts_on": _days_after(plan["starts_on"], 19)},
     )
 
     assert response.status_code == 422

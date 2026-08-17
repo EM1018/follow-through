@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.completion import Completion
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.user import User
@@ -434,4 +435,218 @@ async def test_deleting_user_cascades_to_plans(session: AsyncSession) -> None:
     # session.get() would return the stale object from the identity map
     # without re-querying - a fresh select() actually hits the DB.
     result = await session.exec(select(Plan).where(Plan.id == plan_id))
+    assert list(result) == []
+
+
+# Completions
+
+
+@pytest_asyncio.fixture
+async def _completion_parents(session: AsyncSession) -> tuple[User, Workout, ScheduleEntry]:
+    """A committed user/plan/workout/entry to hang Completion rows off of."""
+    user = User(id=uuid.uuid4(), email="completions@example.com")
+    session.add(user)
+    await session.commit()
+
+    plan = Plan(
+        user_id=user.id,
+        name="Completion Test Plan",
+        is_active=True,
+        starts_on=datetime.now(UTC).date(),
+    )
+    session.add(plan)
+    await session.commit()
+
+    workout = Workout(plan_id=plan.id, name="Completion Test Workout")
+    session.add(workout)
+    await session.commit()
+
+    entry = ScheduleEntry(plan_id=plan.id, workout_id=workout.id, day_of_week=MON)
+    session.add(entry)
+    await session.commit()
+
+    return user, workout, entry
+
+
+async def test_value_without_unit_violates_paired_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=5, unit=None
+    )
+    await _assert_violates(session, completion, "ck_completions_value_unit_paired")
+
+
+async def test_unit_without_value_violates_paired_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=None, unit="miles"
+    )
+    await _assert_violates(session, completion, "ck_completions_value_unit_paired")
+
+
+async def test_value_zero_violates_positive_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=0, unit="miles"
+    )
+    await _assert_violates(session, completion, "ck_completions_value_positive")
+
+
+async def test_value_negative_violates_positive_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=-5, unit="miles"
+    )
+    await _assert_violates(session, completion, "ck_completions_value_positive")
+
+
+async def test_activity_not_in_enum_violates_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", activity="teleporting"
+    )
+    await _assert_violates(session, completion, "ck_completions_activity_valid")
+
+
+async def test_unit_not_in_enum_violates_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=5, unit="furlongs"
+    )
+    await _assert_violates(session, completion, "ck_completions_unit_valid")
+
+
+async def test_duplicate_entry_and_date_violates_unique_index(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, entry = _completion_parents
+    first = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Push", schedule_entry_id=entry.id
+    )
+    session.add(first)
+    await session.commit()
+
+    duplicate = Completion(
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Push (again)",
+        schedule_entry_id=entry.id,
+    )
+    await _assert_violates(session, duplicate, "uq_completions_entry_date")
+
+
+async def test_two_null_entry_completions_same_date_commit_successfully(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    """Positive control: proves uq_completions_entry_date is genuinely partial -
+    standalone logs (schedule_entry_id NULL) never collide, no matter how many
+    share a date.
+    """
+    user, _workout, _entry = _completion_parents
+    first = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run 1")
+    second = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run 2")
+    session.add(first)
+    session.add(second)
+    await session.commit()
+
+    assert first.id is not None
+    assert second.id is not None
+
+
+async def test_deleting_schedule_entry_nulls_link_and_keeps_completion(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Push Day", schedule_entry_id=entry.id
+    )
+    session.add(completion)
+    await session.commit()
+
+    await session.delete(entry)
+    await session.commit()
+
+    # expire_on_commit=False means the completion object above would otherwise
+    # keep serving its stale pre-delete attributes from the identity map, even
+    # under a fresh select() - refresh() forces a real round-trip to the row
+    # ON DELETE SET NULL actually rewrote.
+    await session.refresh(completion)
+    assert completion.schedule_entry_id is None
+    assert completion.label == "Push Day"
+
+
+async def test_deleting_workout_cascades_to_entry_but_keeps_completion(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    """The invariant that matters most: deleting a *plan or workout* must never
+    delete a completion, even though the delete cascades workout -> schedule_entries
+    first. A completion is a fact about the user, not a child of a plan.
+    """
+    user, workout, entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Leg Day", schedule_entry_id=entry.id
+    )
+    session.add(completion)
+    await session.commit()
+    completion_id = completion.id
+    entry_id = entry.id
+
+    await session.delete(workout)
+    await session.commit()
+
+    entry_result = await session.exec(select(ScheduleEntry).where(ScheduleEntry.id == entry_id))
+    assert list(entry_result) == []
+
+    # See test_deleting_schedule_entry_nulls_link_and_keeps_completion for why
+    # refresh() (not a fresh select()) is required to observe the SET NULL.
+    await session.refresh(completion)
+    assert completion.id == completion_id
+    assert completion.schedule_entry_id is None
+    assert completion.label == "Leg Day"
+
+
+async def test_deleting_completion_leaves_its_entry_untouched(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Push Day", schedule_entry_id=entry.id
+    )
+    session.add(completion)
+    await session.commit()
+    entry_id = entry.id
+
+    await session.delete(completion)
+    await session.commit()
+
+    result = await session.exec(select(ScheduleEntry).where(ScheduleEntry.id == entry_id))
+    assert result.one().id == entry_id
+
+
+async def test_deleting_user_cascades_to_completions(session: AsyncSession) -> None:
+    user = User(id=uuid.uuid4(), email="completion-deleteme@example.com")
+    session.add(user)
+    await session.commit()
+
+    completion = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run")
+    session.add(completion)
+    await session.commit()
+    completion_id = completion.id
+
+    await session.delete(user)
+    await session.commit()
+
+    result = await session.exec(select(Completion).where(Completion.id == completion_id))
     assert list(result) == []

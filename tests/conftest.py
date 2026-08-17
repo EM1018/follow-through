@@ -2,7 +2,7 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.db import get_session
 from app.deps import CurrentUser, get_current_user
 from app.models import user as _user  # noqa: F401  (registers User on SQLModel.metadata)
+from app.models.completion import Completion
 from app.models.user import User
 
 TEST_DATABASE_URL = os.environ.get(
@@ -322,3 +323,24 @@ def make_entry() -> Callable[..., Any]:
         return response.json()
 
     return _make_entry
+
+
+@pytest.fixture
+def make_completion() -> Callable[..., Any]:
+    """Composable completion factory, mirroring make_plan/make_workout/make_entry -
+    except Stage 1a ships the completions table with no create endpoint yet, so
+    this inserts directly through the session rather than POSTing.
+    """
+
+    async def _make_completion(
+        session: AsyncSession, *, user_id: UUID, on_date: date, **overrides: Any
+    ) -> Completion:
+        defaults: dict[str, Any] = {"label": "Test Completion"}
+        defaults.update(overrides)
+        completion = Completion(user_id=user_id, on_date=on_date, **defaults)
+        session.add(completion)
+        await session.commit()
+        await session.refresh(completion)
+        return completion
+
+    return _make_completion

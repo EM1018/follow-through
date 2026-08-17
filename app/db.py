@@ -15,6 +15,6 @@ async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_
 
 
 # for routes that depend on this, run queries for this session
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:  # pragma: no cover
     async with async_session_maker() as session:
         yield session

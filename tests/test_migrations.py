@@ -6,7 +6,13 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlmodel import SQLModel
 
-from app.models import plan, schedule_entry, user, workout  # noqa: F401  (register on metadata)
+from app.models import (  # noqa: F401  (register on metadata)
+    completion,
+    plan,
+    schedule_entry,
+    user,
+    workout,
+)
 from tests.conftest import test_engine
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
