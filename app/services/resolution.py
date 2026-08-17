@@ -144,3 +144,20 @@ def resolve(entries: Sequence[ScheduleEntry], on: date) -> DayResolution:
         day_status = DayStatus.EMPTY
 
     return DayResolution(status=day_status, entries=resolved_entries, cancelled=cancelled)
+
+
+def date_within_plan_window(on: date, plan_starts_on: date, plan_ends_on: date | None) -> bool:
+    """Whether `on` falls inside [plan_starts_on, plan_ends_on], both bounds
+    inclusive. plan_ends_on is nullable - a plan with no end date has no
+    upper bound.
+
+    Deliberately outside resolve(): resolve() is plan-blind by design (see its
+    own docstring) and must stay that way, so this lives one layer up as a
+    separate, equally pure primitive. It answers the same question in two
+    places: the schedule endpoint clamps out-of-window dates to EMPTY before
+    ever calling resolve() (resolve() itself never sees the plan or learns
+    that a date is out of range), and schedule-entry create/update reuse it
+    to reject starts_on/ends_on/on_date values that fall outside the plan -
+    "is this date within the plan" is the same check either way.
+    """
+    return plan_starts_on <= on and (plan_ends_on is None or on <= plan_ends_on)

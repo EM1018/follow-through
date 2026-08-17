@@ -10,6 +10,7 @@ from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
 from app.schemas.schedule_entry import ScheduleEntryCreate, ScheduleEntryRead, ScheduleEntryUpdate
+from app.services.resolution import date_within_plan_window
 
 router = APIRouter(prefix="/plans/{plan_id}/schedule-entries", tags=["schedule-entries"])
 
@@ -66,6 +67,14 @@ async def create_entry(
         await _get_plan_workout(session, plan.id, body.workout_id)
     if body.replaces_entry_id is not None:
         await _get_plan_entry(session, plan.id, body.replaces_entry_id)
+
+    for field in ("starts_on", "ends_on", "on_date"):
+        value = getattr(body, field)
+        if value is not None and not date_within_plan_window(value, plan.starts_on, plan.ends_on):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"{field} must fall within the plan's own window",
+            )
 
     entry = ScheduleEntry(plan_id=plan.id, **body.model_dump())
     session.add(entry)
@@ -144,6 +153,20 @@ async def update_entry(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="ends_on must be on or after starts_on",
         )
+
+    effective_on_date = updates.get("on_date", entry.on_date)
+    for field, effective_value in (
+        ("starts_on", effective_starts_on),
+        ("ends_on", effective_ends_on),
+        ("on_date", effective_on_date),
+    ):
+        if effective_value is not None and not date_within_plan_window(
+            effective_value, plan.starts_on, plan.ends_on
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"{field} must fall within the plan's own window",
+            )
 
     effective_workout_id = updates.get("workout_id", entry.workout_id)
     effective_name_override = updates.get("name_override", entry.name_override)

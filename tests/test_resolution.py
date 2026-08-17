@@ -2,7 +2,13 @@ import uuid
 from datetime import UTC, date, datetime
 
 from app.models.schedule_entry import ScheduleEntry
-from app.services.resolution import DayResolution, DayStatus, EntryStatus, resolve
+from app.services.resolution import (
+    DayResolution,
+    DayStatus,
+    EntryStatus,
+    date_within_plan_window,
+    resolve,
+)
 
 MON, TUE, WED, THU, FRI, SAT, SUN = range(1, 8)
 
@@ -510,3 +516,30 @@ def test_mixed_day_one_scheduled_one_substituted_reports_substituted() -> None:
     assert survivors[ordinary.id].status == EntryStatus.SCHEDULED
     assert survivors[substitution.id].status == EntryStatus.SUBSTITUTED
     assert survivors[substitution.id].replaced == substituted_target
+
+
+# PROMPT 10: date_within_plan_window
+
+
+def test_date_within_plan_window_true_when_inside_bounds() -> None:
+    assert date_within_plan_window(date(2026, 8, 15), date(2026, 8, 10), date(2026, 8, 20))
+
+
+def test_date_within_plan_window_inclusive_on_starts_on() -> None:
+    assert date_within_plan_window(date(2026, 8, 10), date(2026, 8, 10), date(2026, 8, 20))
+
+
+def test_date_within_plan_window_inclusive_on_ends_on() -> None:
+    assert date_within_plan_window(date(2026, 8, 20), date(2026, 8, 10), date(2026, 8, 20))
+
+
+def test_date_within_plan_window_false_before_starts_on() -> None:
+    assert not date_within_plan_window(date(2026, 8, 9), date(2026, 8, 10), date(2026, 8, 20))
+
+
+def test_date_within_plan_window_false_after_ends_on() -> None:
+    assert not date_within_plan_window(date(2026, 8, 21), date(2026, 8, 10), date(2026, 8, 20))
+
+
+def test_date_within_plan_window_no_upper_bound_when_ends_on_is_none() -> None:
+    assert date_within_plan_window(date(2099, 1, 1), date(2026, 8, 10), None)
