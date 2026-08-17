@@ -52,8 +52,7 @@ export const dotSize = {
   md: 6,
 } as const;
 
-/** Minimum row heights so Day/Week schedule items clear a comfortable tap target at each surface's scale. */
+/** Minimum row height so a Day view item clears a comfortable tap target. */
 export const minRowHeight = {
   day: 56,
-  week: 32,
 } as const;

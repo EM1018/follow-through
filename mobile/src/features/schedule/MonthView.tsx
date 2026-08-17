@@ -11,7 +11,8 @@ import {
   View,
 } from 'react-native';
 
-import { colors, dotSize, fontSize, fontWeight, spacing } from '@/theme';
+import { DayStatusIndicator } from '@/components/DayStatusIndicator';
+import { colors, fontSize, fontWeight, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
 import { MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, type MonthCell } from './month';
@@ -19,22 +20,6 @@ import { planWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-function Indicator({ status, isLoading }: { status: DaySchedule['status'] | undefined; isLoading: boolean }) {
-  if (isLoading) {
-    return <View style={styles.dotSkeleton} />;
-  }
-  switch (status) {
-    case 'scheduled':
-      return <View style={styles.dotScheduled} />;
-    case 'cancelled':
-      return <Text style={styles.markCancelled}>⊘</Text>;
-    case 'substituted':
-      return <Text style={styles.markSubstituted}>⇄</Text>;
-    default:
-      return null;
-  }
-}
 
 function MonthDayCell({
   cell,
@@ -62,7 +47,7 @@ function MonthDayCell({
         {format(cell.date, 'd')}
       </Text>
       <View style={styles.indicatorSlot}>
-        <Indicator status={day?.status} isLoading={isLoading} />
+        <DayStatusIndicator status={day?.status} isLoading={isLoading} />
       </View>
     </TouchableOpacity>
   );
@@ -283,25 +268,5 @@ const styles = StyleSheet.create({
     height: fontSize.sm,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  dotScheduled: {
-    width: dotSize.md,
-    height: dotSize.md,
-    borderRadius: dotSize.md / 2,
-    backgroundColor: colors.accent,
-  },
-  dotSkeleton: {
-    width: dotSize.md,
-    height: dotSize.md,
-    borderRadius: dotSize.md / 2,
-    backgroundColor: colors.border,
-  },
-  markCancelled: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-  },
-  markSubstituted: {
-    fontSize: fontSize.xs,
-    color: colors.accent,
   },
 });

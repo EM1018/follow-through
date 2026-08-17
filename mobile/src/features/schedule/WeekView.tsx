@@ -1,100 +1,27 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { addDays, differenceInCalendarWeeks, format, isToday } from 'date-fns';
-import { useCallback, useEffect, useMemo } from 'react';
+import { addDays, differenceInCalendarWeeks, format } from 'date-fns';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 
-import { Skeleton } from '@/components/Skeleton';
-import { WeekItem } from '@/components/WeekItem';
-import { colors, fontSize, fontWeight, minRowHeight, radius, spacing } from '@/theme';
+import { spacing } from '@/theme';
 
-import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
+import { scheduleQueryOptions, useSchedule } from './api';
+import { DaySection } from './DaySection';
 import type { EntryTarget } from './EntryActionsSheet';
-import { planWindowState } from './planWindow';
-import { ScheduleErrorState } from './ScheduleErrorState';
+import { selectedDateForWeek } from './weekSelection';
 import { WEEK_OFFSETS, WEEK_WINDOW, weekDates, weekStartFor } from './week';
-
-const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-function WeekCell({
-  date,
-  day,
-  isLoading,
-  planStartsOn,
-  planEndsOn,
-  onRequestAdd,
-  onEntryPress,
-}: {
-  date: Date;
-  day: DaySchedule | undefined;
-  isLoading: boolean;
-  planStartsOn: Date;
-  planEndsOn: Date | null;
-  onRequestAdd: (date: Date) => void;
-  onEntryPress: (target: EntryTarget) => void;
-}) {
-  const today = isToday(date);
-  const isOutOfWindow = planWindowState(date, planStartsOn, planEndsOn) !== 'within';
-  const entries = day?.entries ?? [];
-  const cancelled = day?.cancelled ?? [];
-  const isEmpty = entries.length === 0 && cancelled.length === 0;
-
-  return (
-    <View style={[styles.cell, today && styles.cellToday, isOutOfWindow && styles.cellOutOfWindow]}>
-      <Text style={[styles.cellDate, today && styles.cellDateToday]}>{format(date, 'd')}</Text>
-      {isLoading ? (
-        <Skeleton style={styles.cellSkeleton} />
-      ) : isOutOfWindow ? null : isEmpty ? (
-        <TouchableOpacity
-          style={styles.emptyColumn}
-          onPress={() => onRequestAdd(date)}
-          accessibilityRole="button"
-          accessibilityLabel="Add workout"
-        >
-          <Text style={styles.emptyColumnIcon}>⊕</Text>
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.cellEntries}>
-          {entries.map((entry) => (
-            <WeekItem
-              key={entry.entry_id}
-              state={entry.status}
-              name={entry.name ?? 'Untitled'}
-              onPress={() => onEntryPress({ kind: 'resolved', entry })}
-            />
-          ))}
-          {cancelled.map((target) => (
-            <WeekItem
-              key={target.entry_id}
-              state="cancelled"
-              name={target.name ?? 'Untitled'}
-              onPress={() => onEntryPress({ kind: 'cancelled', target })}
-            />
-          ))}
-          <TouchableOpacity
-            style={styles.cellAddButton}
-            onPress={() => onRequestAdd(date)}
-            accessibilityRole="button"
-            accessibilityLabel="Add workout"
-          >
-            <Text style={styles.cellAddButtonIcon}>⊕</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
-  );
-}
+import { WeekStrip } from './WeekStrip';
 
 function WeekPage({
   planId,
   weekStart,
+  today,
   planStartsOn,
   planEndsOn,
   onRequestAdd,
@@ -102,6 +29,7 @@ function WeekPage({
 }: {
   planId: string;
   weekStart: Date;
+  today: Date;
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
@@ -111,35 +39,42 @@ function WeekPage({
   const scheduleQuery = useSchedule(planId, weekStart, weekEnd);
   const dates = useMemo(() => weekDates(weekStart), [weekStart]);
 
+  // Per-week, ephemeral: a fresh WeekPage mounts (and this re-initializes)
+  // every time paging brings a different week into view -- see the matching
+  // note on WeekView's FlatList windowSize. Never persisted.
+  const [selectedDate, setSelectedDate] = useState(() =>
+    selectedDateForWeek(dates, today, planStartsOn, planEndsOn),
+  );
+
+  const selectedDateParam = format(selectedDate, 'yyyy-MM-dd');
+  const selectedDay = scheduleQuery.data?.days[selectedDateParam];
+
   return (
     <View style={styles.weekPage}>
-      <View style={styles.headerRow}>
-        {WEEKDAY_INITIALS.map((initial, index) => (
-          <View key={index} style={styles.headerCell}>
-            <Text style={styles.headerText}>{initial}</Text>
-          </View>
-        ))}
-      </View>
+      <WeekStrip
+        dates={dates}
+        schedule={scheduleQuery.data}
+        isLoading={scheduleQuery.isLoading}
+        selectedDate={selectedDate}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        // `dates` is memoized on weekStart, so tapping the already-selected
+        // cell hands back the exact same Date reference -- React's setState
+        // bails out on that by itself, which is what makes the tap a no-op.
+        onSelectDate={setSelectedDate}
+      />
 
-      <View style={styles.gridRow}>
-        {dates.map((date) => {
-          const dateParam = format(date, 'yyyy-MM-dd');
-          return (
-            <WeekCell
-              key={dateParam}
-              date={date}
-              day={scheduleQuery.data?.days[dateParam]}
-              isLoading={scheduleQuery.isLoading}
-              planStartsOn={planStartsOn}
-              planEndsOn={planEndsOn}
-              onRequestAdd={onRequestAdd}
-              onEntryPress={(target) => onRequestEntryAction(target, date)}
-            />
-          );
-        })}
-      </View>
-
-      {scheduleQuery.isError ? <ScheduleErrorState error={scheduleQuery.error} onRetry={scheduleQuery.refetch} /> : null}
+      <DaySection
+        date={selectedDate}
+        day={selectedDay}
+        isLoading={scheduleQuery.isLoading}
+        error={scheduleQuery.error}
+        onRetry={scheduleQuery.refetch}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        onRequestAdd={onRequestAdd}
+        onRequestEntryAction={onRequestEntryAction}
+      />
     </View>
   );
 }
@@ -222,6 +157,7 @@ export function WeekView({
         <WeekPage
           planId={planId}
           weekStart={weekStartFor(today, offset)}
+          today={today}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={onRequestAdd}
@@ -250,76 +186,7 @@ export function WeekView({
 
 const styles = StyleSheet.create({
   weekPage: {
-    gap: spacing.xs,
-  },
-  headerRow: {
-    flexDirection: 'row',
-  },
-  headerCell: {
     flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.xs,
-  },
-  headerText: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-    color: colors.textMuted,
-  },
-  // No flex:1 here (or on `cell`'s height) -- removing the forced full-screen
-  // stretch is what lets columns size to their tallest sibling instead of the
-  // screen. Row children still equalize height via the default cross-axis
-  // stretch; `cell`'s own minHeight is the floor for an empty day.
-  gridRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  cell: {
-    flex: 1,
-    minHeight: minRowHeight.week * 2,
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.xs,
-    gap: spacing.xs,
-  },
-  cellToday: {
-    borderColor: colors.accent,
-    borderWidth: 2,
-  },
-  cellOutOfWindow: {
-    backgroundColor: colors.surfaceMuted,
-  },
-  emptyColumn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyColumnIcon: {
-    fontSize: fontSize.sm,
-    color: colors.accent,
-  },
-  cellAddButton: {
-    alignSelf: 'center',
-    paddingTop: spacing.xs,
-  },
-  cellAddButtonIcon: {
-    fontSize: fontSize.sm,
-    color: colors.accent,
-  },
-  cellSkeleton: {
-    height: fontSize.xs,
-    width: '70%',
-  },
-  cellEntries: {
-    gap: spacing.xs,
-  },
-  cellDate: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.medium,
-    color: colors.textMuted,
-  },
-  cellDateToday: {
-    color: colors.accent,
-    fontWeight: fontWeight.bold,
+    gap: spacing.md,
   },
 });
