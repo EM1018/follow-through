@@ -196,6 +196,9 @@
             ],
             "title": "Schedule Entry Id"
           },
+          "source": {
+            "$ref": "#/components/schemas/CompletionSource"
+          },
           "unit": {
             "anyOf": [
               {
@@ -209,8 +212,7 @@
           "value": {
             "anyOf": [
               {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -226,12 +228,22 @@
           "unit",
           "on_date",
           "schedule_entry_id",
+          "source",
           "label",
           "note",
           "created_at"
         ],
         "title": "CompletionRead",
         "type": "object"
+      },
+      "CompletionSource": {
+        "description": "Written once at creation, never derived or updated - schedule_entry_id\ngets nulled out (by ON DELETE SET NULL) the moment its entry or workout is\ndeleted, so it cannot answer \"was this scheduled?\" after the fact. Plan\nadherence must not change retroactively just because someone tidied up\ntheir plan.",
+        "enum": [
+          "scheduled",
+          "standalone"
+        ],
+        "title": "CompletionSource",
+        "type": "string"
       },
       "CompletionUpdate": {
         "additionalProperties": false,
@@ -1206,6 +1218,82 @@
       }
     },
     "/completions": {
+      "get": {
+        "operationId": "list_completions_completions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Activity"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Activity"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CompletionRead"
+                  },
+                  "title": "Response List Completions Completions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Completions",
+        "tags": [
+          "completions"
+        ]
+      },
       "post": {
         "operationId": "create_completion_completions_post",
         "requestBody": {

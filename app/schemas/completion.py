@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.models.completion import CompletionSource
 from app.services.activities import ACTIVITY_UNITS, Activity, Unit
 
 
@@ -68,10 +69,14 @@ class CompletionRead(BaseModel):
 
     id: uuid.UUID
     activity: Activity | None
-    value: Decimal | None
+    # float, not Decimal, on the way out - the exact-precision guarantee is
+    # only needed for the >= target comparison that runs server-side against
+    # the Numeric(8,2) column; the client just displays and counts rows.
+    value: float | None
     unit: Unit | None
     on_date: date
     schedule_entry_id: uuid.UUID | None
+    source: CompletionSource
     label: str
     note: str | None
     created_at: datetime

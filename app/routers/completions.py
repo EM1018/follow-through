@@ -1,12 +1,14 @@
 import uuid
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
 from app.deps import CurrentUser, get_current_user
-from app.models.completion import Completion
+from app.models.completion import Completion, CompletionSource
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
@@ -14,6 +16,8 @@ from app.schemas.completion import CompletionCreate, CompletionRead, CompletionU
 from app.services.activities import ACTIVITY_UNITS, DISPLAY_NAMES, Activity
 
 router = APIRouter(prefix="/completions", tags=["completions"])
+
+_MAX_WINDOW_DAYS = 92  # matches GET /plans/{plan_id}/schedule
 
 
 async def _get_owned_entry(
@@ -78,6 +82,11 @@ async def create_completion(
         unit=body.unit.value if body.unit is not None else None,
         on_date=body.on_date,
         schedule_entry_id=body.schedule_entry_id,
+        source=(
+            CompletionSource.SCHEDULED
+            if body.schedule_entry_id is not None
+            else CompletionSource.STANDALONE
+        ).value,
         label=_derive_label(entry, workout, body.activity),
         note=body.note,
     )
@@ -93,6 +102,42 @@ async def create_completion(
 
     await session.refresh(completion)
     return completion
+
+
+@router.get("", response_model=list[CompletionRead])
+async def list_completions(
+    from_: date = Query(alias="from"),
+    to: date = Query(),
+    activity: Activity | None = Query(default=None),
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[Completion]:
+    if from_ > to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="from must be <= to"
+        )
+
+    window_days = (to - from_).days + 1
+    if window_days > _MAX_WINDOW_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"window must be at most {_MAX_WINDOW_DAYS} days",
+        )
+
+    query = select(Completion).where(
+        Completion.user_id == current_user.user_id,
+        Completion.on_date >= from_,
+        Completion.on_date <= to,
+    )
+    if activity is not None:
+        # NULL activity rows never match an exact filter - there's no
+        # sentinel for "unmatched" yet, and none is needed here.
+        query = query.where(Completion.activity == activity.value)
+
+    query = query.order_by(Completion.on_date.desc(), Completion.created_at.desc())
+
+    result = await session.exec(query)
+    return list(result)
 
 
 async def _get_owned_completion(

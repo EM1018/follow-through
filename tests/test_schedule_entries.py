@@ -24,6 +24,16 @@ def _days_after(start_iso: str, days: int) -> str:
     return (date.fromisoformat(start_iso) + timedelta(days=days)).isoformat()
 
 
+def _next_monday_on_or_after(start_iso: str) -> str:
+    """Mirrors _days_after but lands on a real Monday - day_of_week=1 entries
+    only resolve against calendar dates that are actually Mondays, and a
+    hardcoded literal date drifts out of the plan's window (starts_on=today)
+    the moment real time passes it, exactly like the bug this replaced.
+    """
+    start = date.fromisoformat(start_iso)
+    return (start + timedelta(days=(7 - start.isoweekday() + 1) % 7)).isoformat()
+
+
 # A. entry CRUD happy paths
 
 
@@ -767,38 +777,43 @@ async def test_cancellation_empties_one_monday_others_unaffected(
     workout = await make_workout(client, plan["id"], name="Push")
     recurring = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
 
+    before_monday = _next_monday_on_or_after(plan["starts_on"])
+    target_monday = _days_after(before_monday, 7)
+    tuesday_control = _days_after(before_monday, 1)
+    after_monday = _days_after(target_monday, 7)
+
     await make_entry(
         client,
         plan["id"],
-        on_date="2026-08-24",
-        replaces_entry_id=recurring["id"],  # Monday
+        on_date=target_monday,
+        replaces_entry_id=recurring["id"],
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-17", "to": "2026-08-31"}
+        f"/plans/{plan['id']}/schedule", params={"from": before_monday, "to": after_monday}
     )
     assert response.status_code == 200
     days = response.json()["days"]
 
-    assert days["2026-08-17"]["status"] == "scheduled"  # Monday before, unaffected
-    assert days["2026-08-17"]["entries"] != []
+    assert days[before_monday]["status"] == "scheduled"  # Monday before, unaffected
+    assert days[before_monday]["entries"] != []
 
     # the cancelled Monday: entries is empty, same as a day with nothing
     # scheduled - but status distinguishes the two, which is the entire
     # regression this task exists to close.
-    assert days["2026-08-24"]["entries"] == []
-    assert days["2026-08-24"]["status"] == "cancelled"
-    assert days["2026-08-24"]["cancelled"] == [{"entry_id": recurring["id"], "name": "Push"}]
+    assert days[target_monday]["entries"] == []
+    assert days[target_monday]["status"] == "cancelled"
+    assert days[target_monday]["cancelled"] == [{"entry_id": recurring["id"], "name": "Push"}]
 
     # a day with genuinely nothing scheduled (no entry, no cancellation) must
     # report a *different* status than the cancelled Monday above
-    assert days["2026-08-18"]["entries"] == []
-    assert days["2026-08-18"]["status"] == "empty"
-    assert days["2026-08-18"]["cancelled"] == []
-    assert days["2026-08-18"]["status"] != days["2026-08-24"]["status"]
+    assert days[tuesday_control]["entries"] == []
+    assert days[tuesday_control]["status"] == "empty"
+    assert days[tuesday_control]["cancelled"] == []
+    assert days[tuesday_control]["status"] != days[target_monday]["status"]
 
-    assert days["2026-08-31"]["status"] == "scheduled"  # Monday after, unaffected
-    assert days["2026-08-31"]["entries"] != []
+    assert days[after_monday]["status"] == "scheduled"  # Monday after, unaffected
+    assert days[after_monday]["entries"] != []
 
 
 # R. the substitution test
@@ -817,39 +832,43 @@ async def test_substitution_replaces_one_monday_others_show_original(
     substitute = await make_workout(client, plan["id"], name="Yoga")
     recurring = await make_entry(client, plan["id"], workout_id=original["id"], day_of_week=1)
 
+    before_monday = _next_monday_on_or_after(plan["starts_on"])
+    target_monday = _days_after(before_monday, 7)
+    after_monday = _days_after(target_monday, 7)
+
     await make_entry(
         client,
         plan["id"],
         workout_id=substitute["id"],
-        on_date="2026-08-24",  # Monday
+        on_date=target_monday,
         replaces_entry_id=recurring["id"],
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-17", "to": "2026-08-31"}
+        f"/plans/{plan['id']}/schedule", params={"from": before_monday, "to": after_monday}
     )
     assert response.status_code == 200
     days = response.json()["days"]
 
     # ordinary day: not reported as substituted just because a substitution
     # exists elsewhere in the plan
-    assert days["2026-08-17"]["status"] == "scheduled"
-    assert len(days["2026-08-17"]["entries"]) == 1
-    assert days["2026-08-17"]["entries"][0]["name"] == "Push"
-    assert days["2026-08-17"]["entries"][0]["status"] == "scheduled"
-    assert days["2026-08-17"]["entries"][0]["replaced"] is None
+    assert days[before_monday]["status"] == "scheduled"
+    assert len(days[before_monday]["entries"]) == 1
+    assert days[before_monday]["entries"][0]["name"] == "Push"
+    assert days[before_monday]["entries"][0]["status"] == "scheduled"
+    assert days[before_monday]["entries"][0]["replaced"] is None
 
-    assert days["2026-08-24"]["status"] == "substituted"
-    assert len(days["2026-08-24"]["entries"]) == 1
-    substituted_entry = days["2026-08-24"]["entries"][0]
+    assert days[target_monday]["status"] == "substituted"
+    assert len(days[target_monday]["entries"]) == 1
+    substituted_entry = days[target_monday]["entries"][0]
     assert substituted_entry["name"] == "Yoga"
     assert substituted_entry["status"] == "substituted"
     assert substituted_entry["replaced"] == {"entry_id": recurring["id"], "name": "Push"}
 
-    assert days["2026-08-31"]["status"] == "scheduled"
-    assert len(days["2026-08-31"]["entries"]) == 1
-    assert days["2026-08-31"]["entries"][0]["name"] == "Push"
-    assert days["2026-08-31"]["entries"][0]["status"] == "scheduled"
+    assert days[after_monday]["status"] == "scheduled"
+    assert len(days[after_monday]["entries"]) == 1
+    assert days[after_monday]["entries"][0]["name"] == "Push"
+    assert days[after_monday]["entries"][0]["status"] == "scheduled"
 
 
 # S. PATCH kind-lock

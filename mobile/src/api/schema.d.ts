@@ -33,7 +33,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Completions */
+        get: operations["list_completions_completions_get"];
         put?: never;
         /** Create Completion */
         post: operations["create_completion_completions_post"];
@@ -286,10 +287,21 @@ export interface components {
             on_date: string;
             /** Schedule Entry Id */
             schedule_entry_id: string | null;
+            source: components["schemas"]["CompletionSource"];
             unit: components["schemas"]["Unit"] | null;
             /** Value */
-            value: string | null;
+            value: number | null;
         };
+        /**
+         * CompletionSource
+         * @description Written once at creation, never derived or updated - schedule_entry_id
+         *     gets nulled out (by ON DELETE SET NULL) the moment its entry or workout is
+         *     deleted, so it cannot answer "was this scheduled?" after the fact. Plan
+         *     adherence must not change retroactively just because someone tidied up
+         *     their plan.
+         * @enum {string}
+         */
+        CompletionSource: "scheduled" | "standalone";
         /** CompletionUpdate */
         CompletionUpdate: {
             /** Note */
@@ -616,6 +628,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivitiesResponse"];
+                };
+            };
+        };
+    };
+    list_completions_completions_get: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                activity?: components["schemas"]["Activity"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

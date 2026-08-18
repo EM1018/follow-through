@@ -1,6 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from sqlalchemy import (
     CheckConstraint,
@@ -18,6 +19,21 @@ from app.services.activities import Activity, Unit
 
 _ACTIVITY_VALUES = ", ".join(f"'{a.value}'" for a in Activity)
 _UNIT_VALUES = ", ".join(f"'{u.value}'" for u in Unit)
+
+
+class CompletionSource(StrEnum):
+    """Written once at creation, never derived or updated - schedule_entry_id
+    gets nulled out (by ON DELETE SET NULL) the moment its entry or workout is
+    deleted, so it cannot answer "was this scheduled?" after the fact. Plan
+    adherence must not change retroactively just because someone tidied up
+    their plan.
+    """
+
+    SCHEDULED = "scheduled"
+    STANDALONE = "standalone"
+
+
+_SOURCE_VALUES = ", ".join(f"'{s.value}'" for s in CompletionSource)
 
 
 class Completion(SQLModel, table=True):
@@ -38,6 +54,10 @@ class Completion(SQLModel, table=True):
         CheckConstraint(
             f"unit IS NULL OR unit IN ({_UNIT_VALUES})",
             name="ck_completions_unit_valid",
+        ),
+        CheckConstraint(
+            f"source IN ({_SOURCE_VALUES})",
+            name="ck_completions_source_valid",
         ),
         # Partial: many rows can share on_date once schedule_entry_id has been
         # nulled out by ON DELETE SET NULL, so the uniqueness only holds while
@@ -61,6 +81,9 @@ class Completion(SQLModel, table=True):
     schedule_entry_id: uuid.UUID | None = Field(
         default=None, foreign_key="schedule_entries.id", ondelete="SET NULL"
     )
+    # No default here on purpose - every insert path must set this explicitly,
+    # so a future code path can't silently write a wrong value.
+    source: str
     label: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(

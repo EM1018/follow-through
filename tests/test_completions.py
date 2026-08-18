@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -381,7 +382,7 @@ async def test_patch_adds_amount_to_valueless_row(
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["value"] == "20.00"
+    assert body["value"] == 20.0
     assert body["unit"] == "minutes"
 
 
@@ -434,7 +435,7 @@ async def test_patch_note_alone_leaves_amount_untouched(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["note"] == "Felt good"
-    assert body["value"] == "3.00"
+    assert body["value"] == 3.0
     assert body["unit"] == "miles"
 
 
@@ -561,3 +562,389 @@ async def test_delete_completion_leaves_its_schedule_entry_untouched(
         select(ScheduleEntry).where(ScheduleEntry.id == UUID(entry["id"]))
     )
     assert result.one().id == UUID(entry["id"])
+
+
+# E. source
+
+
+@pytest.mark.asyncio
+async def test_source_is_scheduled_when_entry_linked(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    response = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["source"] == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_source_is_standalone_when_no_entry(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    response = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(TODAY)}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["source"] == "standalone"
+
+
+@pytest.mark.asyncio
+async def test_source_in_post_body_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    response = await client.post(
+        "/completions",
+        json={"activity": "running", "on_date": str(TODAY), "source": "scheduled"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_source_in_patch_body_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    created = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"source": "standalone"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_deleting_schedule_entry_keeps_source_scheduled(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: AsyncSession,
+) -> None:
+    """The one that matters: schedule_entry_id gets nulled by the delete, but
+    source must still read as "scheduled" - it's a snapshot, not derived.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    created = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    await client.delete(f"/plans/{plan['id']}/schedule-entries/{entry['id']}")
+
+    result = await session.exec(
+        select(Completion).where(Completion.id == UUID(completion_id))
+    )
+    row = result.one()
+    assert row.schedule_entry_id is None
+    assert row.source == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_deleting_workout_cascades_but_keeps_source_scheduled(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: AsyncSession,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    created = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    await client.delete(f"/plans/{plan['id']}/workouts/{workout['id']}")
+
+    result = await session.exec(
+        select(Completion).where(Completion.id == UUID(completion_id))
+    )
+    row = result.one()
+    assert row.schedule_entry_id is None
+    assert row.source == "scheduled"
+
+
+# F. value on the wire
+
+
+@pytest.mark.asyncio
+async def test_value_serializes_as_a_number_not_a_decimal_string(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    response = await client.post(
+        "/completions",
+        json={"activity": "running", "value": "10", "unit": "miles", "on_date": str(TODAY)},
+    )
+    assert response.status_code == 201, response.text
+    value = response.json()["value"]
+    assert isinstance(value, float)
+    assert value == 10.0
+
+
+@pytest.mark.asyncio
+async def test_value_round_trips_a_fractional_amount(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    response = await client.post(
+        "/completions",
+        json={"activity": "running", "value": "3.2", "unit": "miles", "on_date": str(TODAY)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["value"] == 3.2
+
+
+@pytest.mark.asyncio
+async def test_stored_value_column_is_still_decimal(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    session: AsyncSession,
+) -> None:
+    """The wire format changed (Stage 2); the column and its exactness
+    guarantee - needed for the future value >= target comparison - did not.
+    """
+    client, _user = authed_client
+    created = await client.post(
+        "/completions",
+        json={"activity": "running", "value": "3.2", "unit": "miles", "on_date": str(TODAY)},
+    )
+    completion_id = created.json()["id"]
+
+    result = await session.exec(
+        select(Completion).where(Completion.id == UUID(completion_id))
+    )
+    row = result.one()
+    assert isinstance(row.value, Decimal)
+    assert row.value == Decimal("3.20")
+
+
+# G. GET /completions
+
+
+@pytest.mark.asyncio
+async def test_returns_own_completions_not_second_users(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    second_user: CurrentUser,
+) -> None:
+    client, user_a = authed_client
+    mine = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
+    assert mine.status_code == 201, mine.text
+
+    _switch_user(second_user)
+    theirs = await client.post(
+        "/completions", json={"activity": "walking", "on_date": str(TODAY)}
+    )
+    assert theirs.status_code == 201, theirs.text
+    _switch_user(user_a)
+
+    response = await client.get(
+        "/completions", params={"from": str(TODAY), "to": str(TODAY)}
+    )
+    assert response.status_code == 200, response.text
+    ids = {row["id"] for row in response.json()}
+    assert mine.json()["id"] in ids
+    assert theirs.json()["id"] not in ids
+
+
+@pytest.mark.asyncio
+async def test_both_boundary_dates_included(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    from_ = YESTERDAY
+    to = TODAY
+    start = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(from_)}
+    )
+    end = await client.post("/completions", json={"activity": "walking", "on_date": str(to)})
+
+    response = await client.get("/completions", params={"from": str(from_), "to": str(to)})
+    assert response.status_code == 200, response.text
+    ids = {row["id"] for row in response.json()}
+    assert start.json()["id"] in ids
+    assert end.json()["id"] in ids
+
+
+@pytest.mark.asyncio
+async def test_ordering_is_on_date_desc_then_created_at_desc(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    session: AsyncSession,
+) -> None:
+    client, _user = authed_client
+    older_day = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(YESTERDAY)}
+    )
+    same_day_first = await client.post(
+        "/completions", json={"activity": "walking", "on_date": str(TODAY)}
+    )
+    same_day_second = await client.post(
+        "/completions", json={"activity": "cycling", "on_date": str(TODAY)}
+    )
+
+    # created_at is server-assigned; force an unambiguous gap rather than
+    # relying on wall-clock timing between two POSTs a few lines apart.
+    first_row = await session.get(Completion, UUID(same_day_first.json()["id"]))
+    second_row = await session.get(Completion, UUID(same_day_second.json()["id"]))
+    first_row.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    second_row.created_at = datetime.now(UTC)
+    session.add_all([first_row, second_row])
+    await session.commit()
+
+    response = await client.get(
+        "/completions", params={"from": str(YESTERDAY), "to": str(TODAY)}
+    )
+    assert response.status_code == 200, response.text
+    ids = [row["id"] for row in response.json()]
+    assert ids == [
+        same_day_second.json()["id"],
+        same_day_first.json()["id"],
+        older_day.json()["id"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_activity_filter_returns_only_matching_rows(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    running = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(TODAY)}
+    )
+    await client.post("/completions", json={"activity": "walking", "on_date": str(TODAY)})
+
+    response = await client.get(
+        "/completions",
+        params={"from": str(TODAY), "to": str(TODAY), "activity": "running"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {row["id"] for row in body} == {running.json()["id"]}
+
+
+@pytest.mark.asyncio
+async def test_activity_filter_excludes_null_activity_rows(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    no_activity = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    assert no_activity.json()["activity"] is None
+
+    response = await client.get(
+        "/completions",
+        params={"from": str(TODAY), "to": str(TODAY), "activity": "running"},
+    )
+    assert response.status_code == 200, response.text
+    assert no_activity.json()["id"] not in {row["id"] for row in response.json()}
+
+
+@pytest.mark.asyncio
+async def test_93_day_window_is_422_92_day_window_is_200(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+
+    too_wide = await client.get(
+        "/completions",
+        params={"from": str(TODAY - timedelta(days=92)), "to": str(TODAY)},
+    )
+    assert too_wide.status_code == 422
+
+    max_width = await client.get(
+        "/completions",
+        params={"from": str(TODAY - timedelta(days=91)), "to": str(TODAY)},
+    )
+    assert max_width.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_to_before_from_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    response = await client.get(
+        "/completions", params={"from": str(TODAY), "to": str(YESTERDAY)}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_missing_from_or_to_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    assert (
+        await client.get("/completions", params={"to": str(TODAY)})
+    ).status_code == 422
+    assert (
+        await client.get("/completions", params={"from": str(TODAY)})
+    ).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_empty_range_returns_empty_list_not_404(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    far_past = TODAY - timedelta(days=365)
+    response = await client.get(
+        "/completions", params={"from": str(far_past), "to": str(far_past)}
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_completion_with_deleted_entry_still_appears(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    created = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    await client.delete(f"/plans/{plan['id']}/schedule-entries/{entry['id']}")
+
+    response = await client.get(
+        "/completions", params={"from": str(TODAY), "to": str(TODAY)}
+    )
+    assert response.status_code == 200, response.text
+    by_id = {row["id"]: row for row in response.json()}
+    assert created.json()["id"] in by_id
+    assert by_id[created.json()["id"]]["schedule_entry_id"] is None
+    assert by_id[created.json()["id"]]["source"] == "scheduled"

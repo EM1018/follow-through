@@ -335,7 +335,7 @@ def make_completion() -> Callable[..., Any]:
     async def _make_completion(
         session: AsyncSession, *, user_id: UUID, on_date: date, **overrides: Any
     ) -> Completion:
-        defaults: dict[str, Any] = {"label": "Test Completion"}
+        defaults: dict[str, Any] = {"label": "Test Completion", "source": "standalone"}
         defaults.update(overrides)
         completion = Completion(user_id=user_id, on_date=on_date, **defaults)
         session.add(completion)

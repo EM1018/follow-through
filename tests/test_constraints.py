@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.completion import Completion
+from app.models.completion import Completion, CompletionSource
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.user import User
@@ -473,7 +473,12 @@ async def test_value_without_unit_violates_paired_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=5, unit=None
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        value=5,
+        unit=None,
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_value_unit_paired")
 
@@ -483,7 +488,12 @@ async def test_unit_without_value_violates_paired_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=None, unit="miles"
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        value=None,
+        unit="miles",
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_value_unit_paired")
 
@@ -493,7 +503,12 @@ async def test_value_zero_violates_positive_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=0, unit="miles"
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        value=0,
+        unit="miles",
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_value_positive")
 
@@ -503,7 +518,12 @@ async def test_value_negative_violates_positive_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=-5, unit="miles"
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        value=-5,
+        unit="miles",
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_value_positive")
 
@@ -513,7 +533,11 @@ async def test_activity_not_in_enum_violates_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", activity="teleporting"
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        activity="teleporting",
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_activity_valid")
 
@@ -523,9 +547,24 @@ async def test_unit_not_in_enum_violates_check(
 ) -> None:
     user, _workout, _entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Run", value=5, unit="furlongs"
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Run",
+        value=5,
+        unit="furlongs",
+        source=CompletionSource.STANDALONE,
     )
     await _assert_violates(session, completion, "ck_completions_unit_valid")
+
+
+async def test_invalid_source_violates_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id, on_date=date(2026, 8, 10), label="Run", source="teleported"
+    )
+    await _assert_violates(session, completion, "ck_completions_source_valid")
 
 
 async def test_duplicate_entry_and_date_violates_unique_index(
@@ -533,7 +572,11 @@ async def test_duplicate_entry_and_date_violates_unique_index(
 ) -> None:
     user, _workout, entry = _completion_parents
     first = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Push", schedule_entry_id=entry.id
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Push",
+        schedule_entry_id=entry.id,
+        source=CompletionSource.SCHEDULED,
     )
     session.add(first)
     await session.commit()
@@ -543,6 +586,7 @@ async def test_duplicate_entry_and_date_violates_unique_index(
         on_date=date(2026, 8, 10),
         label="Push (again)",
         schedule_entry_id=entry.id,
+        source=CompletionSource.SCHEDULED,
     )
     await _assert_violates(session, duplicate, "uq_completions_entry_date")
 
@@ -555,8 +599,18 @@ async def test_two_null_entry_completions_same_date_commit_successfully(
     share a date.
     """
     user, _workout, _entry = _completion_parents
-    first = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run 1")
-    second = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run 2")
+    first = Completion(
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Standalone run 1",
+        source=CompletionSource.STANDALONE,
+    )
+    second = Completion(
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Standalone run 2",
+        source=CompletionSource.STANDALONE,
+    )
     session.add(first)
     session.add(second)
     await session.commit()
@@ -570,7 +624,11 @@ async def test_deleting_schedule_entry_nulls_link_and_keeps_completion(
 ) -> None:
     user, _workout, entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Push Day", schedule_entry_id=entry.id
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Push Day",
+        schedule_entry_id=entry.id,
+        source=CompletionSource.SCHEDULED,
     )
     session.add(completion)
     await session.commit()
@@ -585,6 +643,10 @@ async def test_deleting_schedule_entry_nulls_link_and_keeps_completion(
     await session.refresh(completion)
     assert completion.schedule_entry_id is None
     assert completion.label == "Push Day"
+    # The one that matters: source is written once at creation and never
+    # derived from schedule_entry_id, so it must survive the SET NULL intact -
+    # this is the entire reason the column exists.
+    assert completion.source == CompletionSource.SCHEDULED
 
 
 async def test_deleting_workout_cascades_to_entry_but_keeps_completion(
@@ -596,7 +658,11 @@ async def test_deleting_workout_cascades_to_entry_but_keeps_completion(
     """
     user, workout, entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Leg Day", schedule_entry_id=entry.id
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Leg Day",
+        schedule_entry_id=entry.id,
+        source=CompletionSource.SCHEDULED,
     )
     session.add(completion)
     await session.commit()
@@ -615,6 +681,7 @@ async def test_deleting_workout_cascades_to_entry_but_keeps_completion(
     assert completion.id == completion_id
     assert completion.schedule_entry_id is None
     assert completion.label == "Leg Day"
+    assert completion.source == CompletionSource.SCHEDULED
 
 
 async def test_deleting_completion_leaves_its_entry_untouched(
@@ -622,7 +689,11 @@ async def test_deleting_completion_leaves_its_entry_untouched(
 ) -> None:
     user, _workout, entry = _completion_parents
     completion = Completion(
-        user_id=user.id, on_date=date(2026, 8, 10), label="Push Day", schedule_entry_id=entry.id
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Push Day",
+        schedule_entry_id=entry.id,
+        source=CompletionSource.SCHEDULED,
     )
     session.add(completion)
     await session.commit()
@@ -640,7 +711,12 @@ async def test_deleting_user_cascades_to_completions(session: AsyncSession) -> N
     session.add(user)
     await session.commit()
 
-    completion = Completion(user_id=user.id, on_date=date(2026, 8, 10), label="Standalone run")
+    completion = Completion(
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Standalone run",
+        source=CompletionSource.STANDALONE,
+    )
     session.add(completion)
     await session.commit()
     completion_id = completion.id
