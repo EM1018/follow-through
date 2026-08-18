@@ -75,6 +75,21 @@ async def create_completion(
         if entry.workout_id is not None:
             workout = await session.get(Workout, entry.workout_id)
 
+        # "This happened" and "this didn't happen" can't both be true for the
+        # same entry on the same day - a cancellation or replacement (either
+        # one suppresses the target the same way) already covers this date.
+        cancellation = await session.exec(
+            select(ScheduleEntry).where(
+                ScheduleEntry.replaces_entry_id == body.schedule_entry_id,
+                ScheduleEntry.on_date == body.on_date,
+            )
+        )
+        if cancellation.first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This entry was cancelled or replaced on this date",
+            )
+
     completion = Completion(
         user_id=current_user.user_id,
         activity=body.activity.value if body.activity is not None else None,

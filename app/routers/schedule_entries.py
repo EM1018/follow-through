@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
@@ -6,6 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
 from app.deps import get_owned_plan
+from app.models.completion import Completion
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
@@ -13,6 +15,26 @@ from app.schemas.schedule_entry import ScheduleEntryCreate, ScheduleEntryRead, S
 from app.services.resolution import date_within_plan_window
 
 router = APIRouter(prefix="/plans/{plan_id}/schedule-entries", tags=["schedule-entries"])
+
+
+async def _reject_if_completion_exists(
+    session: AsyncSession, schedule_entry_id: uuid.UUID, on_date: date
+) -> None:
+    """"This happened" and "this didn't happen" can't both be true for the
+    same entry on the same day - scoped to the date, not the entry, since a
+    recurring entry is one row covering many Mondays and a completion on one
+    must not block cancelling another.
+    """
+    conflict = await session.exec(
+        select(Completion).where(
+            Completion.schedule_entry_id == schedule_entry_id, Completion.on_date == on_date
+        )
+    )
+    if conflict.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A completion already exists for this entry on this date",
+        )
 
 
 async def _get_plan_workout(
@@ -67,6 +89,10 @@ async def create_entry(
         await _get_plan_workout(session, plan.id, body.workout_id)
     if body.replaces_entry_id is not None:
         await _get_plan_entry(session, plan.id, body.replaces_entry_id)
+        # replaces_entry_id is never set without on_date (the create schema's
+        # own XOR validator guarantees it), so this is always reachable here.
+        if body.on_date is not None:
+            await _reject_if_completion_exists(session, body.replaces_entry_id, body.on_date)
 
     for field in ("starts_on", "ends_on", "on_date"):
         value = getattr(body, field)
@@ -171,6 +197,8 @@ async def update_entry(
     effective_workout_id = updates.get("workout_id", entry.workout_id)
     effective_name_override = updates.get("name_override", entry.name_override)
     effective_replaces_entry_id = updates.get("replaces_entry_id", entry.replaces_entry_id)
+    if effective_replaces_entry_id is not None and effective_on_date is not None:
+        await _reject_if_completion_exists(session, effective_replaces_entry_id, effective_on_date)
     if (
         effective_workout_id is None
         and effective_name_override is None

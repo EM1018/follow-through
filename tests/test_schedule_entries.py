@@ -73,6 +73,30 @@ async def test_entry_crud_happy_path(
     assert all(entry["id"] != entry_id for entry in after.json())
 
 
+@pytest.mark.asyncio
+async def test_raw_entries_list_has_no_completion_id(
+    authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_workout: Any
+) -> None:
+    """completion_id only makes sense once a date is fixed - ScheduleEntryRead
+    (this endpoint) is dateless, so it must never carry the field. That's the
+    schedule endpoint's own schema (ResolvedEntryRead), not this one.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+
+    await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"workout_id": workout["id"], "day_of_week": 1},
+    )
+
+    listing = await client.get(f"/plans/{plan['id']}/schedule-entries")
+    assert listing.status_code == 200
+    assert listing.json()
+    for entry in listing.json():
+        assert "completion_id" not in entry
+
+
 # B. workout from a different plan
 
 
@@ -1017,8 +1041,9 @@ async def test_schedule_shape_name_only_entry(
     )
     assert response.status_code == 200
     day = response.json()["days"]["2026-08-24"]
-    assert set(day.keys()) == {"status", "entries", "cancelled"}
+    assert set(day.keys()) == {"status", "entries", "cancelled", "completed"}
     assert day["status"] == "scheduled"
+    assert day["completed"] is False
 
     entries = day["entries"]
     assert len(entries) == 1
@@ -1030,12 +1055,14 @@ async def test_schedule_shape_name_only_entry(
         "notes",
         "status",
         "replaced",
+        "completion_id",
     }
     assert entry["workout_id"] is None
     assert entry["name"] == "Recovery walk"
     assert entry["status"] == "scheduled"
     assert entry["replaced"] is None
     assert entry["notes"] is None
+    assert entry["completion_id"] is None
 
 
 # W. ownership on Stage B fields

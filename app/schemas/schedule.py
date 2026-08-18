@@ -28,6 +28,11 @@ class ResolvedEntryRead(BaseModel):
     notes: str | None
     status: EntryStatus
     replaced: EntryRefRead | None
+    # Deliberately not on ScheduleEntryRead (the raw, dateless entries list) -
+    # "Legs every Monday" has completions on many different Mondays, so there's
+    # no single correct value until a date is fixed, which only this
+    # per-day response ever does.
+    completion_id: uuid.UUID | None
 
 
 class DayScheduleRead(BaseModel):
@@ -40,6 +45,7 @@ class DayScheduleRead(BaseModel):
     status: DayStatus
     entries: list[ResolvedEntryRead]
     cancelled: list[EntryRefRead]
+    completed: bool
 
 
 class ScheduleResponse(BaseModel):

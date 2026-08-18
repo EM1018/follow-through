@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -6,6 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
 from app.deps import get_owned_plan
+from app.models.completion import Completion
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
@@ -45,12 +47,13 @@ async def get_schedule(
             detail=f"window must be at most {_MAX_WINDOW_DAYS} days",
         )
 
-    # Both queries are plan-scoped, not date-filtered - one round trip each,
-    # regardless of range size. replaces_entry_id's composite FK guarantees
-    # anything a day's resolution could reference (a survivor, a replaced
-    # entry, or a cancelled target) belongs to this same plan, so both result
-    # sets already cover every entry/workout the loop below could possibly
-    # need - there is no per-day or per-entry follow-up query.
+    # All three queries are plan-scoped (or, for completions, further date-
+    # windowed), not per-day - one round trip each, regardless of range size.
+    # replaces_entry_id's composite FK guarantees anything a day's resolution
+    # could reference (a survivor, a replaced entry, or a cancelled target)
+    # belongs to this same plan, so all three result sets already cover
+    # everything the loop below could possibly need - there is no per-day or
+    # per-entry follow-up query.
     entries_result = await session.exec(
         select(ScheduleEntry).where(ScheduleEntry.plan_id == plan.id)
     )
@@ -58,6 +61,22 @@ async def get_schedule(
 
     workouts_result = await session.exec(select(Workout).where(Workout.plan_id == plan.id))
     workouts_by_id = {workout.id: workout for workout in workouts_result}
+
+    # plan.user_id, not a fresh get_current_user() lookup - get_owned_plan
+    # already confirmed this plan (and therefore every entry_id below) belongs
+    # to the caller, so this is the same identity, not an extra one.
+    entry_ids = [entry.id for entry in entries]
+    completions_result = await session.exec(
+        select(Completion).where(
+            Completion.user_id == plan.user_id,
+            Completion.on_date >= from_,
+            Completion.on_date <= to,
+            Completion.schedule_entry_id.in_(entry_ids),
+        )
+    )
+    completions_by_date: dict[date, list[Completion]] = defaultdict(list)
+    for completion in completions_result:
+        completions_by_date[completion.on_date].append(completion)
 
     def _entry_ref(entry: ScheduleEntry) -> dict:
         name, _notes = _display(entry, workouts_by_id)
@@ -70,9 +89,9 @@ async def get_schedule(
         # what any entry says - resolve() never sees the plan and never learns
         # a date was out of range, it just isn't asked about those dates.
         if date_within_plan_window(current, plan.starts_on, plan.ends_on):
-            day = resolve(entries, current)
+            day = resolve(entries, current, completions_by_date.get(current, []))
         else:
-            day = DayResolution(status=DayStatus.EMPTY, entries=[], cancelled=[])
+            day = DayResolution(status=DayStatus.EMPTY, entries=[], cancelled=[], completed=False)
 
         entries_read = []
         for resolved in day.entries:
@@ -91,6 +110,9 @@ async def get_schedule(
                     "replaced": _entry_ref(resolved.replaced)
                     if resolved.replaced is not None
                     else None,
+                    "completion_id": (
+                        str(resolved.completion_id) if resolved.completion_id is not None else None
+                    ),
                 }
             )
 
@@ -98,6 +120,7 @@ async def get_schedule(
             "status": day.status,
             "entries": entries_read,
             "cancelled": [_entry_ref(target) for target in day.cancelled],
+            "completed": day.completed,
         }
         current += timedelta(days=1)
 

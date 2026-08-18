@@ -1,8 +1,10 @@
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 
+from app.models.completion import Completion
 from app.models.schedule_entry import ScheduleEntry
 
 
@@ -48,6 +50,7 @@ class ResolvedEntry:
     entry: ScheduleEntry
     status: EntryStatus
     replaced: ScheduleEntry | None = None
+    completion_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -55,6 +58,7 @@ class DayResolution:
     status: DayStatus
     entries: list[ResolvedEntry]
     cancelled: list[ScheduleEntry]
+    completed: bool = False
 
 
 def _matches(entry: ScheduleEntry, on: date) -> bool:
@@ -78,12 +82,17 @@ def _is_cancellation(entry: ScheduleEntry) -> bool:
     )
 
 
-def resolve(entries: Sequence[ScheduleEntry], on: date) -> DayResolution:
-    """Stage A+B+C schedule resolution: which entries apply on a given date,
-    and what became of anything they suppressed.
+def resolve(
+    entries: Sequence[ScheduleEntry], on: date, completions: Sequence[Completion] = ()
+) -> DayResolution:
+    """Stage A+B+C+D schedule resolution: which entries apply on a given date,
+    what became of anything they suppressed, and whether the day is complete.
 
     Pure and plan-blind - takes no plan, session, or app state, so it can never
     consult (or be broken by) a plan's is_active flag or its own starts_on/ends_on.
+    completions stays a plain argument, not a query, for the same reason: one
+    call here must not cost a round trip, or a 92-day window would cost 92 of
+    them instead of the caller's fixed few.
     """
     matched = [entry for entry in entries if _matches(entry, on)]
     by_id = {entry.id: entry for entry in entries}
@@ -105,6 +114,17 @@ def resolve(entries: Sequence[ScheduleEntry], on: date) -> DayResolution:
         key=lambda entry: entry.created_at,
     )
 
+    # Keyed by schedule_entry_id, restricted to completions actually on `on` -
+    # a completion against the *original* entry a substitution replaced (or
+    # against any other date) must not count toward what's on the schedule
+    # today. The partial unique index guarantees at most one per
+    # (schedule_entry_id, on_date), so last-wins here never actually collides.
+    completion_id_by_entry_id = {
+        completion.schedule_entry_id: completion.id
+        for completion in completions
+        if completion.schedule_entry_id is not None and completion.on_date == on
+    }
+
     resolved_entries = [
         ResolvedEntry(
             entry=entry,
@@ -116,6 +136,7 @@ def resolve(entries: Sequence[ScheduleEntry], on: date) -> DayResolution:
             replaced=(
                 by_id.get(entry.replaces_entry_id) if entry.replaces_entry_id is not None else None
             ),
+            completion_id=completion_id_by_entry_id.get(entry.id),
         )
         for entry in survivors
     ]
@@ -143,7 +164,17 @@ def resolve(entries: Sequence[ScheduleEntry], on: date) -> DayResolution:
     else:
         day_status = DayStatus.EMPTY
 
-    return DayResolution(status=day_status, entries=resolved_entries, cancelled=cancelled)
+    # "At least one" guard: zero resolved entries would otherwise make this
+    # vacuously true, lighting up every rest day. Computed over resolved_entries
+    # (the survivors), not the raw matched/entries - on a substituted day the
+    # thing that can be completed is the replacement, not the original.
+    completed = bool(resolved_entries) and all(
+        resolved.completion_id is not None for resolved in resolved_entries
+    )
+
+    return DayResolution(
+        status=day_status, entries=resolved_entries, cancelled=cancelled, completed=completed
+    )
 
 
 def date_within_plan_window(on: date, plan_starts_on: date, plan_ends_on: date | None) -> bool:

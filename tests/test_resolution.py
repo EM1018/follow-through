@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, date, datetime
 
+from app.models.completion import Completion
 from app.models.schedule_entry import ScheduleEntry
 from app.services.resolution import (
     DayResolution,
@@ -73,6 +74,20 @@ def _cancellation(
     and never appears itself, on any date.
     """
     return _dated_entry(None, on_date, replaces_entry_id=replaces_entry_id, created_at=created_at)
+
+
+def _completion(schedule_entry_id: uuid.UUID, on_date: date) -> Completion:
+    """resolve() only ever reads .schedule_entry_id/.on_date/.id off this -
+    the rest are required-but-irrelevant fields on the table model, filled
+    with placeholders the same way _recurring_entry fills plan_id.
+    """
+    return Completion(
+        user_id=uuid.uuid4(),
+        on_date=on_date,
+        schedule_entry_id=schedule_entry_id,
+        source="scheduled",
+        label="Test",
+    )
 
 
 def _survivors(day: DayResolution) -> list[ScheduleEntry]:
@@ -543,3 +558,89 @@ def test_date_within_plan_window_false_after_ends_on() -> None:
 
 def test_date_within_plan_window_no_upper_bound_when_ends_on_is_none() -> None:
     assert date_within_plan_window(date(2099, 1, 1), date(2026, 8, 10), None)
+
+
+# STAGE 1D: COMPLETED
+
+
+def test_one_entry_one_matching_completion_is_completed() -> None:
+    entry = _recurring_entry(W1, MON)
+    completion = _completion(entry.id, date(2026, 8, 10))
+
+    day = resolve([entry], date(2026, 8, 10), [completion])
+
+    assert day.completed is True
+    assert day.entries[0].completion_id == completion.id
+
+
+def test_two_entries_one_completion_is_not_completed() -> None:
+    e1 = _recurring_entry(W1, MON)
+    e2 = _recurring_entry(W2, MON)
+    completion = _completion(e1.id, date(2026, 8, 10))
+
+    day = resolve([e1, e2], date(2026, 8, 10), [completion])
+
+    assert day.completed is False
+
+
+def test_two_entries_two_completions_is_completed() -> None:
+    e1 = _recurring_entry(W1, MON)
+    e2 = _recurring_entry(W2, MON)
+    completions = [_completion(e1.id, date(2026, 8, 10)), _completion(e2.id, date(2026, 8, 10))]
+
+    day = resolve([e1, e2], date(2026, 8, 10), completions)
+
+    assert day.completed is True
+
+
+def test_zero_entries_is_not_completed() -> None:
+    """Vacuous truth guard: "every entry is logged" over zero entries would
+    otherwise be trivially true, lighting up every rest day.
+    """
+    day = resolve([], date(2026, 8, 10))
+    assert day.completed is False
+
+
+def test_cancelled_entry_with_no_completions_is_not_completed_and_stays_cancelled() -> None:
+    recurring = _recurring_entry(W1, MON)
+    cancellation = _cancellation(date(2026, 8, 10), recurring.id)
+
+    day = resolve([recurring, cancellation], date(2026, 8, 10))
+
+    assert day.completed is False
+    assert day.status == DayStatus.CANCELLED
+
+
+def test_substituted_day_completed_via_the_replacement() -> None:
+    recurring = _recurring_entry(W1, MON)
+    replacement = _dated_entry(W2, date(2026, 8, 10), replaces_entry_id=recurring.id)
+    completion = _completion(replacement.id, date(2026, 8, 10))
+
+    day = resolve([recurring, replacement], date(2026, 8, 10), [completion])
+
+    assert day.completed is True
+    assert day.status == DayStatus.SUBSTITUTED
+
+
+def test_substituted_day_completion_against_original_not_replacement_is_not_completed() -> None:
+    """The original isn't on the schedule that day - only the replacement is
+    the thing that can be completed.
+    """
+    recurring = _recurring_entry(W1, MON)
+    replacement = _dated_entry(W2, date(2026, 8, 10), replaces_entry_id=recurring.id)
+    completion = _completion(recurring.id, date(2026, 8, 10))
+
+    day = resolve([recurring, replacement], date(2026, 8, 10), [completion])
+
+    assert day.completed is False
+    assert day.entries[0].completion_id is None
+
+
+def test_completion_on_a_different_date_is_ignored() -> None:
+    entry = _recurring_entry(W1, MON)
+    completion = _completion(entry.id, date(2026, 8, 17))
+
+    day = resolve([entry], date(2026, 8, 10), [completion])
+
+    assert day.completed is False
+    assert day.entries[0].completion_id is None

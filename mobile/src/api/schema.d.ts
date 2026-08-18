@@ -318,6 +318,8 @@ export interface components {
         DayScheduleRead: {
             /** Cancelled */
             cancelled: components["schemas"]["EntryRefRead"][];
+            /** Completed */
+            completed: boolean;
             /** Entries */
             entries: components["schemas"]["ResolvedEntryRead"][];
             status: components["schemas"]["DayStatus"];
@@ -437,6 +439,8 @@ export interface components {
         };
         /** ResolvedEntryRead */
         ResolvedEntryRead: {
+            /** Completion Id */
+            completion_id: string | null;
             /**
              * Entry Id
              * Format: uuid
