@@ -10,9 +10,11 @@ import { formatAmount } from './units';
 
 export function LogRow({
   completion,
+  onPress,
   onDelete,
 }: {
   completion: CompletionRead;
+  onPress: (completion: CompletionRead) => void;
   onDelete: (id: string) => void;
 }) {
   const swipeableRef = useRef<Swipeable>(null);
@@ -44,7 +46,12 @@ export function LogRow({
         </TouchableOpacity>
       )}
     >
-      <View style={styles.row}>
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => onPress(completion)}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${completion.label}`}
+      >
         <View style={styles.main}>
           <Text style={styles.title} numberOfLines={1}>
             {completion.label}
@@ -56,7 +63,7 @@ export function LogRow({
           ) : null}
         </View>
         {amount ? <Text style={styles.amount}>{amount}</Text> : null}
-      </View>
+      </TouchableOpacity>
     </Swipeable>
   );
 }

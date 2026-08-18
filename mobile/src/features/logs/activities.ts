@@ -1,17 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
-import { unwrap } from '@/api/errors';
+import { unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
 
 import type { CompletionRead } from './completions';
 
 export type Activity = components['schemas']['Activity'];
 export type ActivityInfo = components['schemas']['ActivityInfo'];
+export type Dimension = components['schemas']['Dimension'];
+export type UnitInfo = components['schemas']['UnitInfo'];
+export type ActivitiesResponse = components['schemas']['ActivitiesResponse'];
 
 /** Near-static vocabulary -- fetched once and cached, never refetched to filter. */
 export function useActivities() {
-  return useQuery({
+  return useQuery<ActivitiesResponse, ApiError>({
     queryKey: ['activities'] as const,
     queryFn: () => unwrap(api.GET('/activities')),
     staleTime: Infinity,

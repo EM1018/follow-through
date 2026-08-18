@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { startOfToday } from 'date-fns';
-import { useMemo, useState } from 'react';
-import { SectionList, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { SectionList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ApiError } from '@/api/errors';
 import { Button } from '@/components/Button';
@@ -15,6 +15,7 @@ import { buildGrid } from '@/features/logs/graph';
 import { LogErrorState } from '@/features/logs/LogErrorState';
 import { EMPTY_LOG_SUBTITLE, EMPTY_LOG_TITLE } from '@/features/logs/logCopy';
 import { LogRow } from '@/features/logs/LogRow';
+import { LogSheet } from '@/features/logs/LogSheet';
 import { LogSkeleton } from '@/features/logs/LogSkeleton';
 import { groupByDate, sectionLabel } from '@/features/logs/sections';
 import { earlierWindow, graphWindow, type DateRange } from '@/features/logs/window';
@@ -24,10 +25,12 @@ import { colors, fontSize, fontWeight, spacing } from '@/theme';
 const COMPLETIONS_QUERY_KEY = ['completions'] as const;
 
 type CompletionsData = InfiniteData<CompletionRead[], DateRange>;
+type SheetState = { mode: 'create' } | { mode: 'edit'; completion: CompletionRead };
 
 export default function LogScreen() {
   const queryClient = useQueryClient();
   const today = useMemo(() => startOfToday(), []);
+  const sectionListRef = useRef<SectionList<CompletionRead>>(null);
 
   const query = useInfiniteQuery<CompletionRead[], ApiError, CompletionsData, typeof COMPLETIONS_QUERY_KEY, DateRange>({
     queryKey: COMPLETIONS_QUERY_KEY,
@@ -88,12 +91,49 @@ export default function LogScreen() {
     },
   });
 
+  const [sheet, setSheet] = useState<SheetState | null>(null);
+
+  // Resets to the base 8-week window and scrolls to top -- extended only far
+  // enough to include a back-logged save that lands outside it, so the user
+  // doesn't save a thing and watch nothing appear.
+  async function handleSaved(completion: CompletionRead) {
+    setSheet(null);
+    const base = graphWindow(today);
+    const from = completion.on_date < base.from ? completion.on_date : base.from;
+    const range = { from, to: base.to };
+    try {
+      const freshRows = await listCompletions(range);
+      queryClient.setQueryData<CompletionsData>(COMPLETIONS_QUERY_KEY, {
+        pages: [freshRows],
+        pageParams: [range],
+      });
+    } catch {
+      // The save already succeeded; a failed refetch just leaves the list stale until the next retry.
+    }
+    requestAnimationFrame(() => {
+      try {
+        sectionListRef.current?.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: false, viewOffset: 0 });
+      } catch {
+        // No rows to scroll to.
+      }
+    });
+  }
+
   const hasCache = rows.length > 0;
   const isEmpty = query.data !== undefined && rows.length === 0;
 
   return (
     <Screen style={styles.screen}>
-      <Text style={styles.title}>Log</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Log</Text>
+        <TouchableOpacity
+          onPress={() => setSheet({ mode: 'create' })}
+          accessibilityRole="button"
+          accessibilityLabel="Log activity"
+        >
+          <Text style={styles.addIcon}>⊕</Text>
+        </TouchableOpacity>
+      </View>
 
       {query.isLoading && !query.data ? (
         <View style={styles.padded}>
@@ -109,7 +149,11 @@ export default function LogScreen() {
 
       {isEmpty ? (
         <View style={styles.centered}>
-          <EmptyState title={EMPTY_LOG_TITLE} subtitle={EMPTY_LOG_SUBTITLE} />
+          <EmptyState
+            title={EMPTY_LOG_TITLE}
+            subtitle={EMPTY_LOG_SUBTITLE}
+            action={<Button label="Log activity" onPress={() => setSheet({ mode: 'create' })} />}
+          />
         </View>
       ) : null}
 
@@ -131,10 +175,15 @@ export default function LogScreen() {
           ) : null}
 
           <SectionList
+            ref={sectionListRef}
             sections={sections}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
-              <LogRow completion={item} onDelete={(id) => deleteMutation.mutate(id)} />
+              <LogRow
+                completion={item}
+                onPress={(completion) => setSheet({ mode: 'edit', completion })}
+                onDelete={(id) => deleteMutation.mutate(id)}
+              />
             )}
             renderSectionHeader={({ section }) => (
               <View style={styles.sectionHeader}>
@@ -169,6 +218,10 @@ export default function LogScreen() {
           />
         </>
       ) : null}
+
+      {sheet ? (
+        <LogSheet {...sheet} onClose={() => setSheet(null)} onSaved={handleSaved} />
+      ) : null}
     </Screen>
   );
 }
@@ -177,12 +230,21 @@ const styles = StyleSheet.create({
   screen: {
     paddingHorizontal: 0,
   },
-  title: {
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
+  },
+  title: {
     fontSize: fontSize.xl,
     fontWeight: fontWeight.bold,
     color: colors.text,
+  },
+  addIcon: {
+    fontSize: fontSize.xl,
+    color: colors.accent,
   },
   padded: {
     paddingHorizontal: spacing.lg,
