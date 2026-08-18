@@ -10,7 +10,7 @@ export default function AuthLayout() {
   }
 
   if (session) {
-    return <Redirect href="/(app)" />;
+    return <Redirect href="/(app)/(tabs)" />;
   }
 
   return <Slot />;

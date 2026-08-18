@@ -56,3 +56,14 @@ export const dotSize = {
 export const minRowHeight = {
   day: 56,
 } as const;
+
+/** Contribution graph cells -- a fixed 0-3 intensity scale, not relative to any single window's data. */
+export const graph = {
+  level0: '#E4E4E9',
+  level1: '#BEE0FC',
+  level2: '#6CB8F2',
+  level3: '#0B6FCB',
+  cellSize: 14,
+  cellGap: 4,
+  cellRadius: 3,
+} as const;
