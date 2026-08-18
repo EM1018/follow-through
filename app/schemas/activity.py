@@ -9,7 +9,7 @@ class ActivityInfo(BaseModel):
     activity: Activity
     display_name: str
     units: list[Unit]
-    default_unit: Unit
+    default_unit: Unit | None
 
 
 class UnitInfo(BaseModel):

@@ -557,6 +557,25 @@ async def test_unit_not_in_enum_violates_check(
     await _assert_violates(session, completion, "ck_completions_unit_valid")
 
 
+async def test_unit_sessions_violates_check(
+    session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
+) -> None:
+    """sessions was removed from the Unit vocabulary (Prompt 18) - the CHECK
+    constraint was tightened to match, so a row using it is now just as
+    invalid as any other string outside the enum.
+    """
+    user, _workout, _entry = _completion_parents
+    completion = Completion(
+        user_id=user.id,
+        on_date=date(2026, 8, 10),
+        label="Leg Day",
+        value=1,
+        unit="sessions",
+        source=CompletionSource.STANDALONE,
+    )
+    await _assert_violates(session, completion, "ck_completions_unit_valid")
+
+
 async def test_invalid_source_violates_check(
     session: AsyncSession, _completion_parents: tuple[User, Workout, ScheduleEntry]
 ) -> None:

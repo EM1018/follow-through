@@ -101,6 +101,26 @@ async def test_miles_of_stretching_is_422(
 
 
 @pytest.mark.asyncio
+async def test_unit_sessions_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    """sessions was removed from the Unit vocabulary (Prompt 18) - Pydantic
+    rejects it on its own now, with no router-level check needed.
+    """
+    client, _user = authed_client
+    response = await client.post(
+        "/completions",
+        json={
+            "activity": "strength_training",
+            "value": "1",
+            "unit": "sessions",
+            "on_date": str(TODAY),
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_value_without_unit_is_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
@@ -457,6 +477,23 @@ async def test_patch_unit_not_permitted_for_stored_activity_is_422(
 
     response = await client.patch(
         f"/completions/{completion_id}", json={"value": "5", "unit": "miles"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_unit_sessions_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    created = await client.post(
+        "/completions",
+        json={"activity": "running", "value": "3", "unit": "miles", "on_date": str(TODAY)},
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"value": "1", "unit": "sessions"}
     )
     assert response.status_code == 422
 

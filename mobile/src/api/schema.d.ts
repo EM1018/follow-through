@@ -241,7 +241,7 @@ export interface components {
         /** ActivityInfo */
         ActivityInfo: {
             activity: components["schemas"]["Activity"];
-            default_unit: components["schemas"]["Unit"];
+            default_unit: components["schemas"]["Unit"] | null;
             /** Display Name */
             display_name: string;
             /** Units */
@@ -528,7 +528,7 @@ export interface components {
          * Unit
          * @enum {string}
          */
-        Unit: "minutes" | "hours" | "miles" | "kilometers" | "sessions" | "sets" | "reps";
+        Unit: "minutes" | "hours" | "miles" | "kilometers" | "sets" | "reps";
         /** UnitInfo */
         UnitInfo: {
             dimension: components["schemas"]["Dimension"];

@@ -18,7 +18,6 @@ class Unit(StrEnum):
     HOURS = "hours"
     MILES = "miles"
     KILOMETERS = "kilometers"
-    SESSIONS = "sessions"
     SETS = "sets"
     REPS = "reps"
 
@@ -34,7 +33,6 @@ UNIT_DIMENSION: dict[Unit, Dimension] = {
     Unit.HOURS: Dimension.TIME,
     Unit.MILES: Dimension.DISTANCE,
     Unit.KILOMETERS: Dimension.DISTANCE,
-    Unit.SESSIONS: Dimension.COUNT,
     Unit.SETS: Dimension.COUNT,
     Unit.REPS: Dimension.COUNT,
 }
@@ -43,7 +41,11 @@ UNIT_DIMENSION: dict[Unit, Dimension] = {
 @dataclass(frozen=True)
 class ActivityUnits:
     permitted: frozenset[Unit]
-    default: Unit
+    # None means "amount is optional here, with no sensible default" - true
+    # for strength training and other now that sessions (which used to fill
+    # this role) is gone; a valueless completion already encodes "this
+    # happened, no number attached" without needing a duplicate unit for it.
+    default: Unit | None
 
 
 ACTIVITY_UNITS: dict[Activity, ActivityUnits] = {
@@ -64,11 +66,11 @@ ACTIVITY_UNITS: dict[Activity, ActivityUnits] = {
         default=Unit.MINUTES,
     ),
     Activity.STRENGTH_TRAINING: ActivityUnits(
-        permitted=frozenset({Unit.MINUTES, Unit.HOURS, Unit.SESSIONS, Unit.SETS, Unit.REPS}),
-        default=Unit.SESSIONS,
+        permitted=frozenset({Unit.MINUTES, Unit.HOURS, Unit.SETS, Unit.REPS}),
+        default=None,
     ),
     Activity.CARDIO: ActivityUnits(
-        permitted=frozenset({Unit.MINUTES, Unit.HOURS, Unit.SESSIONS}),
+        permitted=frozenset({Unit.MINUTES, Unit.HOURS}),
         default=Unit.MINUTES,
     ),
     Activity.STRETCHING_MOBILITY: ActivityUnits(
@@ -76,8 +78,8 @@ ACTIVITY_UNITS: dict[Activity, ActivityUnits] = {
         default=Unit.MINUTES,
     ),
     Activity.OTHER: ActivityUnits(
-        permitted=frozenset({Unit.MINUTES, Unit.HOURS, Unit.SESSIONS}),
-        default=Unit.SESSIONS,
+        permitted=frozenset({Unit.MINUTES, Unit.HOURS}),
+        default=None,
     ),
 }
 

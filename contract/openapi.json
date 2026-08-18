@@ -45,7 +45,14 @@
             "$ref": "#/components/schemas/Activity"
           },
           "default_unit": {
-            "$ref": "#/components/schemas/Unit"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "display_name": {
             "title": "Display Name",
@@ -945,7 +952,6 @@
           "hours",
           "miles",
           "kilometers",
-          "sessions",
           "sets",
           "reps"
         ],
