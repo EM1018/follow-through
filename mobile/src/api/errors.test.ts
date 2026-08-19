@@ -21,3 +21,14 @@ describe('classifyApiError / describeApiError for 422s', () => {
     expect(describeApiError(error)).toBe('Invalid request.');
   });
 });
+
+describe('classifyApiError for 409s', () => {
+  it('classifies as conflict, not server', () => {
+    const error = classifyApiError(409, { detail: 'A completion already exists for this entry on this date' });
+    expect(error).toEqual({ kind: 'conflict' });
+  });
+
+  it('describes without throwing', () => {
+    expect(() => describeApiError({ kind: 'conflict' })).not.toThrow();
+  });
+});

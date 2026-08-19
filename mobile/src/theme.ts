@@ -50,6 +50,8 @@ export const fontWeight = {
 export const dotSize = {
   sm: 5,
   md: 6,
+  /** The substituted-day glyph's badge -- big enough to ring the swap character. */
+  lg: 16,
 } as const;
 
 /** Minimum row height so a Day view item clears a comfortable tap target. */

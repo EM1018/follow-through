@@ -1,6 +1,7 @@
 import type { ScheduleEntry, ScheduleEntryPatch, Workout, WorkoutsById } from './blastRadius';
 import {
   changeWorkoutConfirmCopy,
+  loggedDayConflictMessage,
   moveConfirmCopy,
   moveFailureMessage,
   stopRepeatingConfirmCopy,
@@ -26,7 +27,7 @@ function makeEntry(id: string, overrides: Partial<ScheduleEntry> = {}): Schedule
 }
 
 function makeWorkout(id: string, name: string): Workout {
-  return { id, name, notes: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
+  return { id, name, notes: null, activity: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
 }
 
 const workoutsById: WorkoutsById = { yoga: makeWorkout('yoga', 'Yoga') };
@@ -187,5 +188,19 @@ describe('changeWorkoutConfirmCopy', () => {
     expect(copy.title).toBe('Change Tue, Aug 18 to Legs?');
     expect(copy.message).toBe('Tue, Aug 18 becomes Legs.');
     expect(copy.message).not.toMatch(/already past|swapped individually/);
+  });
+});
+
+describe('loggedDayConflictMessage', () => {
+  it('names the action and never suggests retrying, since retrying just 409s again', () => {
+    const cancel = loggedDayConflictMessage('cancel');
+    expect(cancel).toMatch(/already logged/i);
+    expect(cancel).toMatch(/cancel/i);
+    expect(cancel).not.toMatch(/try again/i);
+
+    const swap = loggedDayConflictMessage('swap');
+    expect(swap).toMatch(/already logged/i);
+    expect(swap).toMatch(/swap/i);
+    expect(swap).not.toMatch(/try again/i);
   });
 });

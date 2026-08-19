@@ -1,17 +1,27 @@
-import { format, isToday } from 'date-fns';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { format, isFuture, isToday } from 'date-fns';
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ApiError } from '@/api/errors';
 import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
-import { DayItem } from '@/components/DayItem';
+import { DayItem, type CompletionControl } from '@/components/DayItem';
 import { Skeleton } from '@/components/Skeleton';
+import { createCompletion, deleteCompletion, invalidateCompletionsQueries } from '@/features/logs/completions';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
-import type { DaySchedule } from './api';
+import type { DaySchedule, ScheduleResponse } from './api';
 import type { EntryTarget } from './EntryActionsSheet';
 import { planWindowState, type PlanWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
+import { applyOptimisticCompletion } from './scheduleCache';
+
+// A client-side placeholder while a create request is in flight, so the
+// circle fills immediately -- reconciled with the server's real id on
+// success, or rolled back entirely on failure. Never sent to the server:
+// the circle is disabled (see completionFor) for the entire time this value
+// could be visible, so a second tap can't turn it into a delete-by-this-id.
+const PENDING_COMPLETION_ID = '__pending__';
 
 function DaySkeleton() {
   return (
@@ -34,10 +44,14 @@ function EmptyDay() {
 function DayContent({
   day,
   windowState,
+  canLog,
+  completionFor,
   onEntryPress,
 }: {
   day: DaySchedule | undefined;
   windowState: PlanWindowState;
+  canLog: boolean;
+  completionFor: (entryId: string, completionId: string | null) => CompletionControl;
   onEntryPress: (target: EntryTarget) => void;
 }) {
   if (windowState === 'before') {
@@ -69,6 +83,10 @@ function DayContent({
           notes={entry.notes}
           replacedName={entry.replaced?.name}
           onPress={() => onEntryPress({ kind: 'resolved', entry })}
+          // Cancelled entries never reach here (they're rendered below, from
+          // day.cancelled, which carries no completion_id at all) -- future
+          // days are the only other place the circle must not appear.
+          completion={canLog ? completionFor(entry.entry_id, entry.completion_id) : undefined}
         />
       ))}
       {day.cancelled.map((target) => (
@@ -85,12 +103,14 @@ function DayContent({
 
 /**
  * Everything "a day looks like": header, entries, empty/out-of-window states,
- * the add button, and the tap-through to the entry actions sheet. Shared 1:1
- * by Day mode (one date, its own fetch) and Week mode (the selected date,
- * sliced out of the week's already-fetched schedule) -- neither fetches here,
- * both just hand in whatever `day`/`isLoading`/`error` their own query has.
+ * the add button, tap-through to the entry actions sheet, and tap-to-log on
+ * each entry's leading circle. Shared 1:1 by Day mode (one date, its own
+ * fetch) and Week mode (the selected date, sliced out of the week's
+ * already-fetched schedule) -- neither fetches here, both just hand in
+ * whatever `day`/`isLoading`/`error` their own query has.
  */
 export function DaySection({
+  planId,
   date,
   day,
   isLoading,
@@ -101,6 +121,7 @@ export function DaySection({
   onRequestAdd,
   onRequestEntryAction,
 }: {
+  planId: string;
   date: Date;
   day: DaySchedule | undefined;
   isLoading: boolean;
@@ -112,6 +133,77 @@ export function DaySection({
   onRequestEntryAction: (target: EntryTarget, date: Date) => void;
 }) {
   const windowState = planWindowState(date, planStartsOn, planEndsOn);
+  const dateParam = format(date, 'yyyy-MM-dd');
+  const queryClient = useQueryClient();
+  const scheduleKey = ['plans', planId, 'schedule'] as const;
+
+  const toggleMutation = useMutation<
+    { entryId: string; completionId: string | null },
+    ApiError,
+    { entryId: string; completionId: string | null },
+    { snapshots: [readonly unknown[], ScheduleResponse | undefined][] }
+  >({
+    mutationFn: async ({ entryId, completionId }) => {
+      if (completionId !== null) {
+        await deleteCompletion(completionId);
+        return { entryId, completionId: null };
+      }
+      const created = await createCompletion({ schedule_entry_id: entryId, on_date: dateParam });
+      return { entryId, completionId: created.id };
+    },
+    onMutate: async ({ entryId, completionId }) => {
+      await queryClient.cancelQueries({ queryKey: scheduleKey });
+      const snapshots = queryClient.getQueriesData<ScheduleResponse>({ queryKey: scheduleKey });
+      const optimisticId = completionId !== null ? null : PENDING_COMPLETION_ID;
+      queryClient.setQueriesData<ScheduleResponse>({ queryKey: scheduleKey }, (old) =>
+        old ? applyOptimisticCompletion(old, dateParam, entryId, optimisticId) : old,
+      );
+      return { snapshots };
+    },
+    onSuccess: ({ entryId, completionId }) => {
+      queryClient.setQueriesData<ScheduleResponse>({ queryKey: scheduleKey }, (old) =>
+        old ? applyOptimisticCompletion(old, dateParam, entryId, completionId) : old,
+      );
+      // Both doors write the same data -- the Log tab's list and graph must
+      // pick up a log made from here, and lose one unlogged from here.
+      invalidateCompletionsQueries(queryClient);
+    },
+    onError: (error, _vars, context) => {
+      context?.snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+      // The server's picture disagrees with ours (already logged, or the day
+      // was cancelled elsewhere) -- converge silently rather than alarm over
+      // what's really just a stale client.
+      if (error.kind === 'conflict') {
+        queryClient.invalidateQueries({ queryKey: scheduleKey });
+        return;
+      }
+      Alert.alert("Couldn't update this log.", 'Try again.');
+    },
+  });
+
+  function completionFor(entryId: string, propCompletionId: string | null): CompletionControl {
+    const isThisEntry = toggleMutation.variables?.entryId === entryId;
+    const pending = toggleMutation.isPending && isThisEntry;
+
+    // The displayed value overrides the prop while a request for this entry
+    // is in flight (the optimistic fill) and right after it settles
+    // successfully (the prop won't catch up until the parent's query
+    // refetches) -- onToggle below closes over this resolved value, not the
+    // raw prop, so a log-then-unlog in quick succession targets the right
+    // request each time instead of re-reading a stale null from props.
+    let completionId = propCompletionId;
+    if (pending) {
+      completionId = toggleMutation.variables!.completionId !== null ? null : PENDING_COMPLETION_ID;
+    } else if (isThisEntry && toggleMutation.isSuccess && toggleMutation.data?.entryId === entryId) {
+      completionId = toggleMutation.data.completionId;
+    }
+
+    return {
+      completionId,
+      pending,
+      onToggle: () => toggleMutation.mutate({ entryId, completionId }),
+    };
+  }
 
   return (
     <View style={styles.dayPage}>
@@ -131,6 +223,11 @@ export function DaySection({
           <DayContent
             day={day}
             windowState={windowState}
+            // Can't have already done a workout that hasn't happened yet --
+            // the backend rejects a future on_date anyway, so this is purely
+            // about not offering a control that would only ever 422.
+            canLog={!isFuture(date)}
+            completionFor={completionFor}
             onEntryPress={(target) => onRequestEntryAction(target, date)}
           />
         )}

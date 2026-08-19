@@ -5,6 +5,7 @@ export type ValidationErrorDetail = components['schemas']['ValidationError'];
 export type ApiError =
   | { kind: 'unauthorized' }
   | { kind: 'not_found' }
+  | { kind: 'conflict' }
   | { kind: 'validation'; detail: ValidationErrorDetail[] }
   | { kind: 'server'; status: number }
   | { kind: 'network' };
@@ -15,6 +16,9 @@ export function classifyApiError(status: number, body: unknown): ApiError {
   }
   if (status === 404) {
     return { kind: 'not_found' };
+  }
+  if (status === 409) {
+    return { kind: 'conflict' };
   }
   if (status === 422) {
     // FastAPI's 422s come in two shapes: pydantic validation failures give
@@ -57,6 +61,8 @@ export function describeApiError(error: ApiError): string {
       return 'You need to sign in again.';
     case 'not_found':
       return 'That no longer exists.';
+    case 'conflict':
+      return "That doesn't match what's on the server anymore.";
     case 'validation':
       return error.detail.map((d) => d.msg).join('\n') || 'Invalid request.';
     case 'server':

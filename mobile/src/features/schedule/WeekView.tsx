@@ -65,6 +65,7 @@ function WeekPage({
       />
 
       <DaySection
+        planId={planId}
         date={selectedDate}
         day={selectedDay}
         isLoading={scheduleQuery.isLoading}

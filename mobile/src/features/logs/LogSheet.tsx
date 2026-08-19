@@ -152,7 +152,13 @@ export function LogSheet(props: LogSheetProps) {
 
   const isValid = mode === 'create' ? canSave(form) : canSaveEdit(props.completion, form);
   const showUnitChips = form.value.trim() !== '';
-  const unitGroups = selectedActivityInfo ? groupUnitsByDimension(selectedActivityInfo.units, unitInfos) : [];
+  // No activity means no permitted set to constrain against -- every known
+  // unit is fair game (matches the backend: "if activity is null, any valid
+  // Unit is accepted"), not zero units.
+  const unitGroups = groupUnitsByDimension(
+    selectedActivityInfo ? selectedActivityInfo.units : unitInfos.map((info) => info.unit),
+    unitInfos,
+  );
   const activityDisplayName = form.activity ? (activitiesById.get(form.activity)?.display_name ?? form.activity) : null;
 
   const title = mode === 'create' ? 'Log activity' : 'Edit log';

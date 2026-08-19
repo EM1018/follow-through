@@ -15,7 +15,10 @@ export function LogRow({
 }: {
   completion: CompletionRead;
   onPress: (completion: CompletionRead) => void;
-  onDelete: (id: string) => void;
+  // The whole completion, not just its id -- the caller needs
+  // schedule_entry_id to know whether this delete should also invalidate the
+  // schedule (only entry-linked logs can leave a stale filled circle behind).
+  onDelete: (completion: CompletionRead) => void;
 }) {
   const swipeableRef = useRef<Swipeable>(null);
 
@@ -28,7 +31,7 @@ export function LogRow({
     swipeableRef.current?.close();
     Alert.alert(deleteCompletionDialogCopy.title, deleteCompletionDialogCopy.message, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => onDelete(completion.id) },
+      { text: 'Delete', style: 'destructive', onPress: () => onDelete(completion) },
     ]);
   }
 

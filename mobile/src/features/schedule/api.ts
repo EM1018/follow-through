@@ -63,3 +63,15 @@ export function invalidatePlanScheduleData(queryClient: QueryClient, planId: str
   queryClient.invalidateQueries({ queryKey: ['plans', planId, 'workouts'] });
   queryClient.invalidateQueries({ queryKey: ['plans', planId, 'schedule-entries'] });
 }
+
+/**
+ * Every schedule query in the cache, regardless of plan or date range -- for
+ * callers that don't know which plan a completion's entry belongs to (the
+ * Log tab's delete action isn't scoped to a plan at all). Matched by
+ * position, not a full key, since the date range varies per query.
+ */
+export function invalidateAllScheduleQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({
+    predicate: (query) => query.queryKey[0] === 'plans' && query.queryKey[2] === 'schedule',
+  });
+}

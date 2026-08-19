@@ -9,7 +9,13 @@ import { EmptyState } from '@/components/EmptyState';
 import { Screen } from '@/components/Screen';
 import { ActivityFilterChips } from '@/features/logs/ActivityFilterChips';
 import { presentActivities, useActivities, type Activity } from '@/features/logs/activities';
-import { deleteCompletion, listCompletions, type CompletionRead } from '@/features/logs/completions';
+import {
+  COMPLETIONS_QUERY_KEY,
+  completionIsEntryLinked,
+  deleteCompletion,
+  listCompletions,
+  type CompletionRead,
+} from '@/features/logs/completions';
 import { ContributionGraph } from '@/features/logs/ContributionGraph';
 import { buildGrid } from '@/features/logs/graph';
 import { LogErrorState } from '@/features/logs/LogErrorState';
@@ -19,10 +25,9 @@ import { LogSheet } from '@/features/logs/LogSheet';
 import { LogSkeleton } from '@/features/logs/LogSkeleton';
 import { groupByDate, sectionLabel } from '@/features/logs/sections';
 import { earlierWindow, graphWindow, type DateRange } from '@/features/logs/window';
+import { invalidateAllScheduleQueries } from '@/features/schedule/api';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
 import { colors, fontSize, fontWeight, spacing } from '@/theme';
-
-const COMPLETIONS_QUERY_KEY = ['completions'] as const;
 
 type CompletionsData = InfiniteData<CompletionRead[], DateRange>;
 type SheetState = { mode: 'create' } | { mode: 'edit'; completion: CompletionRead };
@@ -70,24 +75,39 @@ export default function LogScreen() {
   const grid = useMemo(() => buildGrid(filteredRows, today), [filteredRows, today]);
   const graphTotal = useMemo(() => grid.flat().reduce((sum, cell) => sum + cell.count, 0), [grid]);
 
-  const [deleteError, setDeleteError] = useState<{ id: string; error: ApiError } | null>(null);
+  const [deleteError, setDeleteError] = useState<{ completion: CompletionRead; error: ApiError } | null>(null);
 
-  const deleteMutation = useMutation<void, ApiError, string, { previous: CompletionsData | undefined }>({
-    mutationFn: (id) => deleteCompletion(id),
-    onMutate: async (id) => {
+  const deleteMutation = useMutation<
+    void,
+    ApiError,
+    CompletionRead,
+    { previous: CompletionsData | undefined }
+  >({
+    mutationFn: (completion) => deleteCompletion(completion.id),
+    onMutate: async (completion) => {
       await queryClient.cancelQueries({ queryKey: COMPLETIONS_QUERY_KEY });
       setDeleteError(null);
       const previous = queryClient.getQueryData<CompletionsData>(COMPLETIONS_QUERY_KEY);
       queryClient.setQueryData<CompletionsData>(COMPLETIONS_QUERY_KEY, (old) =>
-        old ? { ...old, pages: old.pages.map((page) => page.filter((row) => row.id !== id)) } : old,
+        old
+          ? { ...old, pages: old.pages.map((page) => page.filter((row) => row.id !== completion.id)) }
+          : old,
       );
       return { previous };
     },
-    onError: (error, id, context) => {
+    onSuccess: (_data, completion) => {
+      // Both doors write the same data -- an entry-linked log deleted here
+      // must clear the filled circle it left on the schedule, or it stays
+      // filled for a completion that no longer exists.
+      if (completionIsEntryLinked(completion)) {
+        invalidateAllScheduleQueries(queryClient);
+      }
+    },
+    onError: (error, completion, context) => {
       if (context?.previous) {
         queryClient.setQueryData(COMPLETIONS_QUERY_KEY, context.previous);
       }
-      setDeleteError({ id, error });
+      setDeleteError({ completion, error });
     },
   });
 
@@ -169,7 +189,7 @@ export default function LogScreen() {
             <View style={styles.padded}>
               <ScheduleErrorState
                 error={deleteError.error}
-                onRetry={() => deleteMutation.mutate(deleteError.id)}
+                onRetry={() => deleteMutation.mutate(deleteError.completion)}
               />
             </View>
           ) : null}
@@ -182,7 +202,7 @@ export default function LogScreen() {
               <LogRow
                 completion={item}
                 onPress={(completion) => setSheet({ mode: 'edit', completion })}
-                onDelete={(id) => deleteMutation.mutate(id)}
+                onDelete={(completion) => deleteMutation.mutate(completion)}
               />
             )}
             renderSectionHeader={({ section }) => (

@@ -21,7 +21,7 @@ const PLAN_ID = 'plan-1';
 // actionsFor's day-state branching lives entirely in the tapped entry's own
 // shape (see the function's doc comment) -- this stands in wherever the
 // signature still requires a DaySchedule.
-const DUMMY_DAY: DaySchedule = { status: 'empty', entries: [], cancelled: [] };
+const DUMMY_DAY: DaySchedule = { status: 'empty', entries: [], cancelled: [], completed: false };
 
 function makeEntry(id: string, overrides: Partial<ScheduleEntry> = {}): ScheduleEntry {
   return {
@@ -40,7 +40,7 @@ function makeEntry(id: string, overrides: Partial<ScheduleEntry> = {}): Schedule
 }
 
 function makeWorkout(id: string, name: string): Workout {
-  return { id, name, notes: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
+  return { id, name, notes: null, activity: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
 }
 
 describe('entriesForWorkout', () => {

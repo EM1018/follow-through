@@ -38,6 +38,7 @@ function DayPage({
 
   return (
     <DaySection
+      planId={planId}
       date={date}
       day={day}
       isLoading={scheduleQuery.isLoading}

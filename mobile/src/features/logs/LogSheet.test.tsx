@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Text, TouchableOpacity } from 'react-native';
+import { Text, TextInput, TouchableOpacity } from 'react-native';
 import renderer, { act, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer';
 
 import { LogSheet } from './LogSheet';
@@ -114,6 +114,32 @@ describe('LogSheet edit mode', () => {
     );
     expect(findText(root, 'Edit log')).toBeDefined();
     expect(findText(root, 'Save changes')).toBeDefined();
+  });
+
+  it('offers every unit, not zero, when editing amount on a completion with no activity', () => {
+    // An entry-linked log whose workout has no activity set -- there's no
+    // permitted set to constrain against, so every known unit must still be
+    // pickable, not none of them.
+    const root = renderWithClient(
+      <LogSheet
+        mode="edit"
+        completion={completion({ activity: null, unit: null, value: null, schedule_entry_id: 'entry-1', source: 'scheduled' })}
+        onClose={jest.fn()}
+        onSaved={jest.fn()}
+      />,
+    );
+
+    const amountInput = root
+      .findAllByType(TextInput)
+      .find((node) => node.props.placeholder === 'Leave blank to log without an amount')!;
+    act(() => {
+      amountInput.props.onChangeText('30');
+    });
+
+    // "sets" belongs to strength_training, not running -- its presence here
+    // proves the picker fell back to the full unit list, not one activity's.
+    expect(findText(root, 'sets')).toBeDefined();
+    expect(findText(root, 'miles')).toBeDefined();
   });
 });
 

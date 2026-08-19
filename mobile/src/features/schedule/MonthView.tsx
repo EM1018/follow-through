@@ -47,7 +47,7 @@ function MonthDayCell({
         {format(cell.date, 'd')}
       </Text>
       <View style={styles.indicatorSlot}>
-        <DayStatusIndicator status={day?.status} isLoading={isLoading} />
+        <DayStatusIndicator status={day?.status} completed={day?.completed} isLoading={isLoading} />
       </View>
     </TouchableOpacity>
   );

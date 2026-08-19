@@ -35,6 +35,7 @@ describe('visibleNotes against resolved schedule entries', () => {
       notes: 'Negative split the back half',
       status: 'substituted',
       replaced: { entry_id: 'entry-0', name: 'Easy Run' },
+      completion_id: null,
     };
     expect(visibleNotes(entry.notes)).toBe('Negative split the back half');
   });
@@ -47,6 +48,7 @@ describe('visibleNotes against resolved schedule entries', () => {
       notes: null,
       status: 'substituted',
       replaced: { entry_id: 'entry-0', name: 'Easy Run' },
+      completion_id: null,
     };
     expect(visibleNotes(entry.notes)).toBeNull();
   });

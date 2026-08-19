@@ -20,7 +20,7 @@ function makeEntry(id: string, overrides: Partial<ScheduleEntry> = {}): Schedule
 }
 
 function makeWorkout(id: string, name: string): Workout {
-  return { id, name, notes: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
+  return { id, name, notes: null, activity: null, plan_id: PLAN_ID, created_at: '2026-01-01T00:00:00Z' };
 }
 
 describe('workoutDeleteDialogCopy', () => {

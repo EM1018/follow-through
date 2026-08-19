@@ -2,7 +2,7 @@ import { addDays, format, startOfWeek } from 'date-fns';
 import { Text, TouchableOpacity, View } from 'react-native';
 import renderer, { act, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer';
 
-import { colors } from '@/theme';
+import { colors, dotSize } from '@/theme';
 
 import type { ScheduleResponse } from './api';
 import { WeekStrip } from './WeekStrip';
@@ -25,12 +25,15 @@ const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 const planStartsOn = new Date(2026, 0, 1);
 const planEndsOn = new Date(2026, 11, 31);
 
-function scheduleWith(statuses: Record<string, ScheduleResponse['days'][string]['status']>): ScheduleResponse {
+function scheduleWith(
+  statuses: Record<string, ScheduleResponse['days'][string]['status']>,
+  completed: Record<string, boolean> = {},
+): ScheduleResponse {
   const days: ScheduleResponse['days'] = {};
   for (const date of dates) {
     const key = format(date, 'yyyy-MM-dd');
     const status = statuses[key] ?? 'empty';
-    days[key] = { status, entries: [], cancelled: [] };
+    days[key] = { status, entries: [], cancelled: [], completed: completed[key] ?? false };
   }
   return { days };
 }
@@ -57,7 +60,7 @@ describe('WeekStrip', () => {
     expect(lastTexts[0]).toBe('S');
   });
 
-  it('draws a dot for a scheduled day and a swap glyph for a substituted day, matching DayStatusIndicator', () => {
+  it('draws a hollow dot for an uncompleted scheduled day and a swap glyph for a substituted day, matching DayStatusIndicator', () => {
     const key0 = dates[0].toISOString().slice(0, 10);
     const key1 = dates[1].toISOString().slice(0, 10);
     const schedule = scheduleWith({ [key0]: 'scheduled', [key1]: 'substituted' });
@@ -73,10 +76,60 @@ describe('WeekStrip', () => {
       />,
     );
     const cells = root.findAllByType(TouchableOpacity);
-    const dotViews = cells[0].findAllByType(View).map((v) => flatten(v.props.style));
-    expect(dotViews.some((s) => s.backgroundColor === colors.accent && s.borderRadius)).toBe(true);
+    // Matched on width, not just borderRadius -- the outer cell is round too
+    // (radius.md) and, being dates[0]/selected, also has backgroundColor:
+    // colors.accent of its own. dotSize.md is what's actually distinguishing.
+    const dotViews = cells[0]
+      .findAllByType(View)
+      .map((v) => flatten(v.props.style))
+      .filter((s) => s.width === dotSize.md);
+    expect(dotViews.some((s) => s.borderColor === colors.accent)).toBe(true);
+    expect(dotViews.some((s) => s.backgroundColor === colors.accent)).toBe(false);
     const swapTexts = cells[1].findAllByType(Text).map((t) => t.props.children);
     expect(swapTexts).toContain('⇄');
+  });
+
+  it('fills the dot when a scheduled day is completed', () => {
+    const key0 = dates[0].toISOString().slice(0, 10);
+    const schedule = scheduleWith({ [key0]: 'scheduled' }, { [key0]: true });
+    const root = render(
+      <WeekStrip
+        dates={dates}
+        schedule={schedule}
+        isLoading={false}
+        selectedDate={dates[0]}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        onSelectDate={jest.fn()}
+      />,
+    );
+    const cells = root.findAllByType(TouchableOpacity);
+    const dotViews = cells[0]
+      .findAllByType(View)
+      .map((v) => flatten(v.props.style))
+      .filter((s) => s.width === dotSize.md);
+    expect(dotViews.some((s) => s.backgroundColor === colors.accent)).toBe(true);
+  });
+
+  it('still shows the swap glyph, just filled, for a substituted-and-completed day', () => {
+    const key1 = dates[1].toISOString().slice(0, 10);
+    const schedule = scheduleWith({ [key1]: 'substituted' }, { [key1]: true });
+    const root = render(
+      <WeekStrip
+        dates={dates}
+        schedule={schedule}
+        isLoading={false}
+        selectedDate={dates[0]}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        onSelectDate={jest.fn()}
+      />,
+    );
+    const cells = root.findAllByType(TouchableOpacity);
+    const swapTexts = cells[1].findAllByType(Text).map((t) => t.props.children);
+    expect(swapTexts).toContain('⇄');
+    const badgeViews = cells[1].findAllByType(View).map((v) => flatten(v.props.style));
+    expect(badgeViews.some((s) => s.backgroundColor === colors.accent && s.borderRadius)).toBe(true);
   });
 
   it('renders nothing for an empty day', () => {

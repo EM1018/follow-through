@@ -3,7 +3,7 @@ import renderer, { act, type ReactTestRenderer, type ReactTestInstance } from 'r
 
 import { colors } from '@/theme';
 
-import { DayItem } from './DayItem';
+import { DayItem, type CompletionControl } from './DayItem';
 
 function render(element: React.ReactElement): ReactTestInstance {
   let tree: ReactTestRenderer;
@@ -90,5 +90,55 @@ describe('DayItem', () => {
     const root = render(<DayItem state="scheduled" name="Tempo Run" notes={notes} onPress={jest.fn()} />);
     const texts = root.findAllByType(Text).map((node) => node.props.children);
     expect(texts).toEqual(['Tempo Run']);
+  });
+
+  it('renders no leading circle when completion is not supplied (future day, or a cancelled row)', () => {
+    const root = render(<DayItem state="scheduled" name="Tempo Run" onPress={jest.fn()} />);
+    // Only the outer row TouchableOpacity -- no nested one for a circle.
+    expect(root.findAllByType(TouchableOpacity)).toHaveLength(1);
+  });
+
+  it('renders a hollow circle when completionId is null', () => {
+    const completion: CompletionControl = { completionId: null, onToggle: jest.fn(), pending: false };
+    const root = render(<DayItem state="scheduled" name="Tempo Run" onPress={jest.fn()} completion={completion} />);
+    const circleTouchable = root.findAllByType(TouchableOpacity)[1];
+    const circleView = circleTouchable.findAllByType(View).find((v) => flatten(v.props.style).borderRadius);
+    const circleStyle = flatten(circleView!.props.style);
+    expect(circleStyle.borderColor).toBe(colors.border);
+    expect(circleStyle.backgroundColor).toBeUndefined();
+    expect(circleTouchable.props.accessibilityState.checked).toBe(false);
+  });
+
+  it('renders a filled circle when completionId is set', () => {
+    const completion: CompletionControl = { completionId: 'c1', onToggle: jest.fn(), pending: false };
+    const root = render(<DayItem state="scheduled" name="Tempo Run" onPress={jest.fn()} completion={completion} />);
+    const circleTouchable = root.findAllByType(TouchableOpacity)[1];
+    const circleView = circleTouchable.findAllByType(View).find((v) => flatten(v.props.style).borderRadius);
+    const circleStyle = flatten(circleView!.props.style);
+    expect(circleStyle.backgroundColor).toBe(colors.accent);
+    expect(circleTouchable.props.accessibilityState.checked).toBe(true);
+  });
+
+  it('fires onToggle, not the row onPress, when the circle is tapped', () => {
+    const onPress = jest.fn();
+    const onToggle = jest.fn();
+    const completion: CompletionControl = { completionId: null, onToggle, pending: false };
+    const root = render(<DayItem state="scheduled" name="Tempo Run" onPress={onPress} completion={completion} />);
+    act(() => {
+      root.findAllByType(TouchableOpacity)[1].props.onPress();
+    });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('disables the circle while pending, without hiding the fill it already optimistically shows', () => {
+    const completion: CompletionControl = { completionId: 'c1', onToggle: jest.fn(), pending: true };
+    const root = render(<DayItem state="scheduled" name="Tempo Run" onPress={jest.fn()} completion={completion} />);
+    const circleTouchable = root.findAllByType(TouchableOpacity)[1];
+    expect(circleTouchable.props.disabled).toBe(true);
+    const circleView = circleTouchable.findAllByType(View).find((v) => flatten(v.props.style).borderRadius);
+    const circleStyle = flatten(circleView!.props.style);
+    expect(circleStyle.backgroundColor).toBe(colors.accent);
+    expect(circleStyle.opacity).toBe(0.5);
   });
 });

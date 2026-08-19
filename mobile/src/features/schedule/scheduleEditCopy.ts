@@ -126,6 +126,17 @@ export function stopRepeatingFailureMessage(failedCount: number): string {
 }
 
 /**
+ * The cancel/complete invariant (1d, Direction A): cancelling or swapping a
+ * day that's already logged is refused server-side (409) rather than
+ * silently contradicting a fact the user already recorded. "Try again"
+ * would be actively wrong here -- retrying just 409s again until the log
+ * is removed first.
+ */
+export function loggedDayConflictMessage(action: 'cancel' | 'swap'): string {
+  return `This day is already logged. Remove the log first, then ${action} it.`;
+}
+
+/**
  * Change workout (Stage 3) confirm copy. The reassurance about individually
  * swapped days only applies to a recurring entry -- a dated one-off has no
  * "other occurrences" a replacement could be pointing at instead of it.

@@ -35,7 +35,12 @@ import { cancellationPayload, replacementPayload, type ScheduleEntryCreate } fro
 import { visibleNotes } from './notes';
 import { applyOptimisticCancel } from './scheduleCache';
 import { changeToExistingWorkoutPatch, changeToNewNamePatch, patchThenClearStranded, stopRepeatingPatch } from './scheduleEdit';
-import { changeWorkoutConfirmCopy, stopRepeatingConfirmCopy, stopRepeatingFailureMessage } from './scheduleEditCopy';
+import {
+  changeWorkoutConfirmCopy,
+  loggedDayConflictMessage,
+  stopRepeatingConfirmCopy,
+  stopRepeatingFailureMessage,
+} from './scheduleEditCopy';
 import { WorkoutPickerSheet, type WorkoutSelection } from './WorkoutPickerSheet';
 
 const EMPTY_ENTRIES: never[] = [];
@@ -64,11 +69,13 @@ function ruleActionsFor(entry: ScheduleEntry): RuleAction[] {
  * why). Sequential, not atomic -- callers report `created: false` honestly
  * rather than rolling the delete back.
  */
+type ReplaceResult = { created: true } | { created: false; error: ApiError };
+
 async function replaceExisting(
   planId: string,
   existingId: string,
   body: ScheduleEntryCreate,
-): Promise<{ created: boolean }> {
+): Promise<ReplaceResult> {
   await unwrap(
     api.DELETE('/plans/{plan_id}/schedule-entries/{entry_id}', {
       params: { path: { plan_id: planId, entry_id: existingId } },
@@ -79,8 +86,8 @@ async function replaceExisting(
       api.POST('/plans/{plan_id}/schedule-entries', { params: { path: { plan_id: planId } }, body }),
     );
     return { created: true };
-  } catch {
-    return { created: false };
+  } catch (error) {
+    return { created: false, error: error as ApiError };
   }
 }
 
@@ -243,9 +250,12 @@ export function EntryActionsSheet({
       );
       return { snapshots };
     },
-    onError: (_error, _vars, context) => {
+    onError: (error, _vars, context) => {
       context?.snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
-      Alert.alert(`Couldn't cancel ${format(date, 'EEE, MMM d')}.`, 'Try again.');
+      Alert.alert(
+        `Couldn't cancel ${format(date, 'EEE, MMM d')}.`,
+        error.kind === 'conflict' ? loggedDayConflictMessage('cancel') : 'Try again.',
+      );
     },
     onSuccess: invalidateAndClose,
   });
@@ -255,13 +265,18 @@ export function EntryActionsSheet({
   // visible -- the replacement would keep winning. Sequential, not atomic;
   // an honest partial-failure message rather than a rollback, matching how
   // Change swap (Stage 2) behaves.
-  const cancelSubstitutedMutation = useMutation<{ created: boolean }, ApiError, void>({
+  const cancelSubstitutedMutation = useMutation<ReplaceResult, ApiError, void>({
     mutationFn: () =>
       replaceExisting(planId, (rawEntry as ScheduleEntry).id, cancellationPayload((root as ScheduleEntry).id, dateParam)),
-    onSuccess: ({ created }) => {
+    onSuccess: (result) => {
       invalidatePlanScheduleData(queryClient, planId);
-      if (!created) {
-        Alert.alert("Couldn't finish cancelling", "Removed the old swap but couldn't save the new one.");
+      if (!result.created) {
+        Alert.alert(
+          "Couldn't finish cancelling",
+          result.error.kind === 'conflict'
+            ? `Removed the old swap. ${loggedDayConflictMessage('cancel')}`
+            : "Removed the old swap but couldn't save the new one.",
+        );
       }
       onClose();
     },
@@ -297,25 +312,33 @@ export function EntryActionsSheet({
         invalidateAndClose();
         return;
       }
-      Alert.alert(`Couldn't swap ${format(date, 'EEE, MMM d')}.`, 'Try again.');
+      Alert.alert(
+        `Couldn't swap ${format(date, 'EEE, MMM d')}.`,
+        error.kind === 'conflict' ? loggedDayConflictMessage('swap') : 'Try again.',
+      );
     },
   });
 
   // Change swap: the current replacement has to go first (same reasoning as
   // cancelSubstitutedMutation), then a new replacement against the root --
   // never against the swap being superseded, or the chain would deepen.
-  const changeSwapMutation = useMutation<{ created: boolean }, ApiError, string>({
+  const changeSwapMutation = useMutation<ReplaceResult, ApiError, string>({
     mutationFn: (workoutId) =>
       replaceExisting(
         planId,
         (rawEntry as ScheduleEntry).id,
         replacementPayload((root as ScheduleEntry).id, dateParam, workoutId),
       ),
-    onSuccess: ({ created }) => {
+    onSuccess: (result) => {
       setPickerAction(null);
       invalidatePlanScheduleData(queryClient, planId);
-      if (!created) {
-        Alert.alert("Couldn't finish swapping", "Removed the old swap but couldn't save the new one.");
+      if (!result.created) {
+        Alert.alert(
+          "Couldn't finish swapping",
+          result.error.kind === 'conflict'
+            ? `Removed the old swap. ${loggedDayConflictMessage('swap')}`
+            : "Removed the old swap but couldn't save the new one.",
+        );
       }
       onClose();
     },
