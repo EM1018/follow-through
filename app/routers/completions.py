@@ -13,7 +13,7 @@ from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
 from app.schemas.completion import CompletionCreate, CompletionRead, CompletionUpdate
-from app.services.activities import ACTIVITY_UNITS, DISPLAY_NAMES, Activity
+from app.services.activities import ACTIVITY_UNITS, DISPLAY_NAMES, Activity, Unit
 
 router = APIRouter(prefix="/completions", tags=["completions"])
 
@@ -40,6 +40,20 @@ async def _get_owned_entry(
         )
 
     return entry
+
+
+def _derive_activity(
+    workout: Workout | None, activity: Activity | None
+) -> Activity | None:
+    # An explicit activity always wins; only fill in when the client left it
+    # out. A name-only entry has no workout to read from, and a workout with
+    # no activity of its own has nothing to substitute - null stays null,
+    # since `other` is a real activity that would satisfy an "Other" goal.
+    if activity is not None:
+        return activity
+    if workout is not None and workout.activity is not None:
+        return Activity(workout.activity)
+    return None
 
 
 def _derive_label(
@@ -90,9 +104,11 @@ async def create_completion(
                 detail="This entry was cancelled or replaced on this date",
             )
 
+    activity = _derive_activity(workout, body.activity)
+
     completion = Completion(
         user_id=current_user.user_id,
-        activity=body.activity.value if body.activity is not None else None,
+        activity=activity.value if activity is not None else None,
         value=body.value,
         unit=body.unit.value if body.unit is not None else None,
         on_date=body.on_date,
@@ -174,17 +190,35 @@ async def update_completion(
 ) -> Completion:
     fields = body.model_fields_set
 
+    # Validate the merged result, not the raw payload - e.g. PATCHing activity
+    # alone onto a row already holding an incompatible unit (or the reverse)
+    # must still be caught, the same combination POST would have rejected.
+    # value and unit are always a consistent pair here: CompletionUpdate's own
+    # validator guarantees both or neither are in fields, and the stored pair
+    # was already valid when it was written.
+    merged_activity = (
+        body.activity
+        if "activity" in fields
+        else (Activity(completion.activity) if completion.activity is not None else None)
+    )
+    merged_unit = (
+        body.unit
+        if "unit" in fields
+        else (Unit(completion.unit) if completion.unit is not None else None)
+    )
+    merged_value = body.value if "value" in fields else completion.value
+
+    if merged_value is not None and merged_activity is not None:
+        if merged_unit not in ACTIVITY_UNITS[merged_activity].permitted:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"{merged_unit} is not a valid unit for {merged_activity}",
+            )
+
+    if "activity" in fields:
+        completion.activity = body.activity.value if body.activity is not None else None
+
     if "value" in fields:
-        # CompletionUpdate's own validator already guarantees value and unit
-        # are both present here or both absent - never one without the other.
-        if body.value is not None and completion.activity is not None:
-            activity = Activity(completion.activity)
-            assert body.unit is not None
-            if body.unit not in ACTIVITY_UNITS[activity].permitted:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"{body.unit} is not a valid unit for {activity}",
-                )
         completion.value = body.value
         completion.unit = body.unit.value if body.unit is not None else None
 

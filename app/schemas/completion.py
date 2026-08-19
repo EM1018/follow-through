@@ -49,6 +49,7 @@ class CompletionCreate(BaseModel):
 class CompletionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    activity: Activity | None = None
     value: Decimal | None = Field(default=None, gt=0)
     unit: Unit | None = None
     note: str | None = None

@@ -375,6 +375,91 @@ async def test_duplicate_entry_and_date_is_409(
     assert len(list(result)) == 1
 
 
+# B2. activity derivation from the workout (Prompt 23)
+
+
+@pytest.mark.asyncio
+async def test_entry_linked_completion_derives_activity_from_workout(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"], activity="strength_training")
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    response = await client.post(
+        "/completions",
+        json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] == "strength_training"
+
+
+@pytest.mark.asyncio
+async def test_entry_linked_completion_with_untagged_workout_activity_stays_null(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    response = await client.post(
+        "/completions",
+        json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] is None
+
+
+@pytest.mark.asyncio
+async def test_name_only_entry_has_no_workout_to_derive_activity_from(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    entry = await make_entry(client, plan["id"], name_override="Recovery walk")
+
+    response = await client.post(
+        "/completions",
+        json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_activity_in_body_wins_over_workouts_activity(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"], activity="strength_training")
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    response = await client.post(
+        "/completions",
+        json={
+            "schedule_entry_id": entry["id"],
+            "activity": "cardio",
+            "on_date": str(TODAY),
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["activity"] == "cardio"
+
+
 # C. PATCH /completions/{id}
 
 
@@ -502,6 +587,9 @@ async def test_patch_unit_sessions_is_422(
 async def test_patch_immutable_fields_are_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
+    """activity moved to the mutable list (Prompt 23) - a different activity
+    is the same event, unlike a different date or a different schedule entry.
+    """
     client, _user = authed_client
     created = await client.post(
         "/completions", json={"activity": "running", "on_date": str(TODAY)}
@@ -509,7 +597,6 @@ async def test_patch_immutable_fields_are_422(
     completion_id = created.json()["id"]
 
     for payload in (
-        {"activity": "walking"},
         {"on_date": str(YESTERDAY)},
         {"schedule_entry_id": str(uuid4())},
     ):
@@ -533,6 +620,157 @@ async def test_patch_another_users_completion_is_404(
     assert response.status_code == 404
 
     _switch_user(user_a)
+
+
+# C2. PATCH activity (Prompt 23)
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_onto_null_activity_completion(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: AsyncSession,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    created = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+    assert created.json()["activity"] is None
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"activity": "strength_training"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["activity"] == "strength_training"
+
+    result = await session.exec(
+        select(Completion).where(Completion.id == UUID(completion_id))
+    )
+    assert result.one().activity == "strength_training"
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_to_null(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    created = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"activity": None}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["activity"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_incompatible_with_stored_unit_is_422(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    created = await client.post(
+        "/completions",
+        json={
+            "activity": "running",
+            "value": "5",
+            "unit": "miles",
+            "on_date": str(TODAY),
+        },
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"activity": "stretching_mobility"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_and_unit_together_into_valid_pair(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _user = authed_client
+    created = await client.post(
+        "/completions",
+        json={
+            "activity": "running",
+            "value": "5",
+            "unit": "miles",
+            "on_date": str(TODAY),
+        },
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}",
+        json={"activity": "stretching_mobility", "value": "20", "unit": "minutes"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["activity"] == "stretching_mobility"
+    assert body["value"] == 20.0
+    assert body["unit"] == "minutes"
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_on_another_users_completion_is_404(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    second_user: CurrentUser,
+) -> None:
+    client, user_a = authed_client
+    created = await client.post(
+        "/completions", json={"activity": "running", "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    _switch_user(second_user)
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"activity": "cycling"}
+    )
+    assert response.status_code == 404
+
+    _switch_user(user_a)
+
+
+@pytest.mark.asyncio
+async def test_patch_activity_leaves_source_and_entry_link_untouched(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: AsyncSession,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"])
+
+    created = await client.post(
+        "/completions", json={"schedule_entry_id": entry["id"], "on_date": str(TODAY)}
+    )
+    completion_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/completions/{completion_id}", json={"activity": "strength_training"}
+    )
+    assert response.status_code == 200, response.text
+
+    result = await session.exec(
+        select(Completion).where(Completion.id == UUID(completion_id))
+    )
+    row = result.one()
+    assert row.source == "scheduled"
+    assert row.schedule_entry_id == UUID(entry["id"])
 
 
 # D. DELETE /completions/{id}

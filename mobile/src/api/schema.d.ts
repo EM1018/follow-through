@@ -304,6 +304,7 @@ export interface components {
         CompletionSource: "scheduled" | "standalone";
         /** CompletionUpdate */
         CompletionUpdate: {
+            activity?: components["schemas"]["Activity"] | null;
             /** Note */
             note?: string | null;
             unit?: components["schemas"]["Unit"] | null;
