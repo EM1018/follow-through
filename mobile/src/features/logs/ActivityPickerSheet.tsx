@@ -5,17 +5,26 @@ import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import type { Activity, ActivityInfo } from './activities';
 
-/** Listed in the response's own order, checkmarked selection, no default -- nothing is preselected. */
+/**
+ * Listed in the response's own order, checkmarked selection, no default --
+ * nothing is preselected. `allowClear` adds a leading "No activity" row that
+ * calls `onClear` -- only meaningful where the activity is optional (a
+ * workout's tag), never shown where it's required (logging one directly).
+ */
 export function ActivityPickerSheet({
   activities,
   selected,
   onSelect,
   onClose,
+  allowClear = false,
+  onClear,
 }: {
   activities: ActivityInfo[];
   selected: Activity | null;
   onSelect: (activity: Activity) => void;
   onClose: () => void;
+  allowClear?: boolean;
+  onClear?: () => void;
 }) {
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -25,6 +34,18 @@ export function ActivityPickerSheet({
             <Text style={styles.title}>Activity</Text>
             <View style={styles.divider} />
             <View style={styles.list}>
+              {allowClear ? (
+                <TouchableOpacity
+                  style={styles.row}
+                  onPress={onClear}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selected === null }}
+                  accessibilityLabel="No activity"
+                >
+                  <Text style={[styles.rowName, styles.rowNameMuted]}>No activity</Text>
+                  {selected === null ? <Text style={styles.checkmark}>✓</Text> : null}
+                </TouchableOpacity>
+              ) : null}
               {activities.map((info) => {
                 const isSelected = info.activity === selected;
                 return (
@@ -91,6 +112,9 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     fontWeight: fontWeight.semibold,
     color: colors.text,
+  },
+  rowNameMuted: {
+    color: colors.textMuted,
   },
   checkmark: {
     fontSize: fontSize.md,

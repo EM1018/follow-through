@@ -21,12 +21,17 @@ import { api } from '@/api/client';
 import { describeApiError, unwrap, type ApiError } from '@/api/errors';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { ActivityPickerSheet } from '@/features/logs/ActivityPickerSheet';
+import { useActivities, type Activity, type ActivityInfo } from '@/features/logs/activities';
+import { SelectField } from '@/features/logs/SelectField';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { buildEntryPayloads } from './entryPayload';
 import { WEEKDAYS } from './weekdays';
 
 type ActivePicker = 'starting' | 'ending' | null;
+
+const EMPTY_ACTIVITIES: ActivityInfo[] = [];
 
 // Parent conditionally mounts this component to show/hide it (rather than
 // toggling a `visible` prop while mounted), so a fresh mount is guaranteed
@@ -44,6 +49,10 @@ export function AddWorkoutModal({
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [notes, setNotes] = useState('');
+  // No preselected default -- blank means unset, and a guessed activity would
+  // silently credit the wrong goal without the user ever seeing it happen.
+  const [activity, setActivity] = useState<Activity | null>(null);
+  const [activityPickerOpen, setActivityPickerOpen] = useState(false);
   const [repeat, setRepeat] = useState(false);
   const [selectedWeekdays, setSelectedWeekdays] = useState<Set<number>>(() => new Set([getISODay(date)]));
   const [startingOn, setStartingOn] = useState(date);
@@ -52,6 +61,11 @@ export function AddWorkoutModal({
   const [isSaving, setIsSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const isSavingRef = useRef(false);
+
+  const activitiesQuery = useActivities();
+  const activities = activitiesQuery.data?.activities ?? EMPTY_ACTIVITIES;
+  const activitiesById = useMemo(() => new Map(activities.map((info) => [info.activity, info])), [activities]);
+  const activityDisplayName = activity ? (activitiesById.get(activity)?.display_name ?? activity) : null;
 
   const onChangeStarting = useCallback((event: DateTimePickerEvent, selected?: Date) => {
     if (Platform.OS === 'android') {
@@ -110,7 +124,7 @@ export function AddWorkoutModal({
       const workout = await unwrap(
         api.POST('/plans/{plan_id}/workouts', {
           params: { path: { plan_id: planId } },
-          body: { name: name.trim(), notes: notes.trim() || null },
+          body: { name: name.trim(), notes: notes.trim() || null, activity },
         }),
       );
 
@@ -154,7 +168,26 @@ export function AddWorkoutModal({
       isSavingRef.current = false;
       setIsSaving(false);
     }
-  }, [canSave, planId, name, notes, repeat, date, selectedWeekdays, startingOn, endingOn, queryClient, onClose]);
+  }, [canSave, planId, name, notes, activity, repeat, date, selectedWeekdays, startingOn, endingOn, queryClient, onClose]);
+
+  if (activityPickerOpen) {
+    return (
+      <ActivityPickerSheet
+        activities={activities}
+        selected={activity}
+        onSelect={(selected) => {
+          setActivity(selected);
+          setActivityPickerOpen(false);
+        }}
+        onClose={() => setActivityPickerOpen(false)}
+        allowClear
+        onClear={() => {
+          setActivity(null);
+          setActivityPickerOpen(false);
+        }}
+      />
+    );
+  }
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={handleDismiss}>
@@ -188,6 +221,13 @@ export function AddWorkoutModal({
                     multiline
                   />
                 </View>
+
+                <SelectField
+                  label="Activity"
+                  value={activityDisplayName}
+                  placeholder="None"
+                  onPress={() => setActivityPickerOpen(true)}
+                />
 
                 <View style={styles.switchRow}>
                   <Text style={styles.label}>Repeat?</Text>

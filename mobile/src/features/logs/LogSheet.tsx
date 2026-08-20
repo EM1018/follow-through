@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -26,18 +25,22 @@ import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { useActivities, type Activity, type ActivityInfo, type UnitInfo } from './activities';
 import { ActivityPickerSheet } from './ActivityPickerSheet';
+import { AmountField } from './AmountField';
 import {
   buildCreatePayload,
   buildPatch,
   canSave,
   canSaveEdit,
+  formsEqual,
   groupUnitsByDimension,
   resetUnitForActivity,
   type CompletionForm,
 } from './completionForm';
 import { createCompletion, updateCompletion, type CompletionRead } from './completions';
+import { fieldStyles } from './fieldStyles';
+import { NoteField } from './NoteField';
 import { sectionLabel } from './sections';
-import { UnitChips } from './UnitChips';
+import { SelectField } from './SelectField';
 
 export type LogSheetProps =
   | { mode: 'create'; onClose: () => void; onSaved: (completion: CompletionRead) => void }
@@ -60,16 +63,10 @@ function initialFormFor(props: LogSheetProps, today: Date): CompletionForm {
   return { activity: null, value: '', unit: null, onDate: formatDateOnly(today), note: '' };
 }
 
-function formsEqual(a: CompletionForm, b: CompletionForm): boolean {
-  return (
-    a.activity === b.activity && a.value === b.value && a.unit === b.unit && a.onDate === b.onDate && a.note === b.note
-  );
-}
-
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={fieldStyles.field}>
+      <Text style={fieldStyles.label}>{label}</Text>
       <View style={[styles.selectField, styles.readOnlyField]}>
         <Text style={styles.readOnlyText}>{value}</Text>
       </View>
@@ -151,7 +148,6 @@ export function LogSheet(props: LogSheetProps) {
   }
 
   const isValid = mode === 'create' ? canSave(form) : canSaveEdit(props.completion, form);
-  const showUnitChips = form.value.trim() !== '';
   // No activity means no permitted set to constrain against -- every known
   // unit is fair game (matches the backend: "if activity is null, any valid
   // Unit is accepted"), not zero units.
@@ -166,20 +162,13 @@ export function LogSheet(props: LogSheetProps) {
   const canInteract = !activitiesLoading && !activitiesQuery.isError;
 
   const amountField = (
-    <View style={styles.field}>
-      <Text style={styles.label}>Amount</Text>
-      <TextInput
-        style={styles.input}
-        value={form.value}
-        onChangeText={(text) => setForm((prev) => ({ ...prev, value: text }))}
-        placeholder="Leave blank to log without an amount"
-        placeholderTextColor={colors.textMuted}
-        keyboardType="decimal-pad"
-      />
-      {showUnitChips ? (
-        <UnitChips groups={unitGroups} selected={form.unit} onSelect={(unit) => setForm((prev) => ({ ...prev, unit }))} />
-      ) : null}
-    </View>
+    <AmountField
+      value={form.value}
+      unit={form.unit}
+      unitGroups={unitGroups}
+      onChangeValue={(text) => setForm((prev) => ({ ...prev, value: text }))}
+      onChangeUnit={(unit) => setForm((prev) => ({ ...prev, unit }))}
+    />
   );
 
   return (
@@ -215,23 +204,17 @@ export function LogSheet(props: LogSheetProps) {
                       </>
                     ) : (
                       <>
-                        <View style={styles.field}>
-                          <Text style={styles.label}>Activity</Text>
-                          <TouchableOpacity
-                            style={styles.selectField}
-                            onPress={() => setActivityPickerOpen(true)}
-                            accessibilityRole="button"
-                          >
-                            <Text style={[styles.selectFieldText, !activityDisplayName && styles.placeholderText]}>
-                              {activityDisplayName ?? 'Choose an activity'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
+                        <SelectField
+                          label="Activity"
+                          value={activityDisplayName}
+                          placeholder="Choose an activity"
+                          onPress={() => setActivityPickerOpen(true)}
+                        />
 
                         {amountField}
 
-                        <View style={styles.field}>
-                          <Text style={styles.label}>Date</Text>
+                        <View style={fieldStyles.field}>
+                          <Text style={fieldStyles.label}>Date</Text>
                           <TouchableOpacity
                             style={styles.selectField}
                             onPress={() => setDatePickerOpen(true)}
@@ -257,17 +240,7 @@ export function LogSheet(props: LogSheetProps) {
                       </>
                     )}
 
-                    <View style={styles.field}>
-                      <Text style={styles.label}>Note</Text>
-                      <TextInput
-                        style={[styles.input, styles.noteInput]}
-                        value={form.note}
-                        onChangeText={(text) => setForm((prev) => ({ ...prev, note: text }))}
-                        placeholder="Optional"
-                        placeholderTextColor={colors.textMuted}
-                        multiline
-                      />
-                    </View>
+                    <NoteField value={form.note} onChangeText={(text) => setForm((prev) => ({ ...prev, note: text }))} />
 
                     {/* Reserved for what this satisfies once the dry-run endpoint exists -- not computed on the client. */}
                     <View style={styles.footerSlot} />
@@ -330,27 +303,6 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.bold,
     color: colors.text,
   },
-  field: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.medium,
-    color: colors.text,
-  },
-  input: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  noteInput: {
-    minHeight: spacing.xl * 2,
-    textAlignVertical: 'top',
-  },
   selectField: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
@@ -361,9 +313,6 @@ const styles = StyleSheet.create({
   selectFieldText: {
     fontSize: fontSize.md,
     color: colors.text,
-  },
-  placeholderText: {
-    color: colors.textMuted,
   },
   readOnlyField: {
     backgroundColor: colors.surfaceMuted,

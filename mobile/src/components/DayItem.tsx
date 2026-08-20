@@ -12,6 +12,12 @@ export type CompletionControl = {
   pending: boolean;
 };
 
+export type AmountControl = {
+  /** "Add amount" with nothing logged yet, or the formatted amount (e.g. "45 min") once there is one. */
+  label: string;
+  onPress: () => void;
+};
+
 type DayItemProps = {
   state: DayItemState;
   name: string;
@@ -22,6 +28,8 @@ type DayItemProps = {
   onPress: () => void;
   /** Present only when this row can be logged right now -- absent hides the leading circle entirely (future days, and cancelled rows never get one at all), not just disables it. */
   completion?: CompletionControl;
+  /** Present only on a row that's actually logged -- with no completion there's nothing to patch. A third tap target, so it stays a small trailing affordance rather than widening the row's main hit area. */
+  amount?: AmountControl;
 };
 
 function visibleNotes(notes: string | null | undefined): string | null {
@@ -37,7 +45,7 @@ function visibleNotes(notes: string | null | undefined): string | null {
  * with `colors.background` (not `colors.surface`, which the day card itself
  * uses) so each item reads as its own block against the card behind it.
  */
-export function DayItem({ state, name, notes, replacedName, onPress, completion }: DayItemProps) {
+export function DayItem({ state, name, notes, replacedName, onPress, completion, amount }: DayItemProps) {
   const cancelled = state === 'cancelled';
   const substituted = state === 'substituted';
   const notesText = cancelled ? null : visibleNotes(notes);
@@ -82,6 +90,18 @@ export function DayItem({ state, name, notes, replacedName, onPress, completion 
           </Text>
         ) : null}
       </View>
+      {amount ? (
+        <TouchableOpacity
+          style={styles.amountSlot}
+          onPress={amount.onPress}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit amount for ${name}`}
+        >
+          <Text style={styles.amountText} numberOfLines={1}>
+            {amount.label}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -149,5 +169,17 @@ const styles = StyleSheet.create({
   notesText: {
     fontSize: fontSize.sm,
     color: colors.textMuted,
+  },
+  amountSlot: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  amountText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.accent,
+    maxWidth: 90,
   },
 });

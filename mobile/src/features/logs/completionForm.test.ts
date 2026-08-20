@@ -109,40 +109,58 @@ describe('groupUnitsByDimension', () => {
 
 describe('buildPatch', () => {
   it('is empty when nothing changed', () => {
-    const original = completion({ note: 'hi', value: 3, unit: 'miles' });
-    const f = form({ note: 'hi', value: '3', unit: 'miles' });
+    const original = completion({ activity: 'running', note: 'hi', value: 3, unit: 'miles' });
+    const f = form({ activity: 'running', note: 'hi', value: '3', unit: 'miles' });
     expect(buildPatch(original, f)).toEqual({});
   });
 
   it('contains only the note when just the note changed', () => {
-    const original = completion({ note: 'old', value: null, unit: null });
-    const f = form({ note: 'new', value: '', unit: null });
+    const original = completion({ activity: 'running', note: 'old', value: null, unit: null });
+    const f = form({ activity: 'running', note: 'new', value: '', unit: null });
     expect(buildPatch(original, f)).toEqual({ note: 'new' });
   });
 
   it('nulls both value and unit when the value is cleared', () => {
-    const original = completion({ value: 3, unit: 'miles', note: null });
-    const f = form({ value: '', unit: null, note: '' });
+    const original = completion({ activity: 'running', value: 3, unit: 'miles', note: null });
+    const f = form({ activity: 'running', value: '', unit: null, note: '' });
     expect(buildPatch(original, f)).toEqual({ value: null, unit: null });
+  });
+
+  it('contains only activity when just activity changed', () => {
+    const original = completion({ activity: 'running', note: 'hi', value: 3, unit: 'miles' });
+    const f = form({ activity: 'strength_training', note: 'hi', value: '3', unit: 'miles' });
+    expect(buildPatch(original, f)).toEqual({ activity: 'strength_training' });
+  });
+
+  it('includes activity: null when clearing it back to unset', () => {
+    const original = completion({ activity: 'running', note: 'hi', value: null, unit: null });
+    const f = form({ activity: null, note: 'hi', value: '', unit: null });
+    expect(buildPatch(original, f)).toEqual({ activity: null });
   });
 });
 
 describe('canSaveEdit', () => {
   it('is false when nothing changed', () => {
-    const original = completion({ note: 'hi', value: 3, unit: 'miles' });
-    const f = form({ note: 'hi', value: '3', unit: 'miles' });
+    const original = completion({ activity: 'running', note: 'hi', value: 3, unit: 'miles' });
+    const f = form({ activity: 'running', note: 'hi', value: '3', unit: 'miles' });
     expect(canSaveEdit(original, f)).toBe(false);
   });
 
   it('is true once a field changes', () => {
-    const original = completion({ note: 'hi', value: 3, unit: 'miles' });
-    const f = form({ note: 'hi there', value: '3', unit: 'miles' });
+    const original = completion({ activity: 'running', note: 'hi', value: 3, unit: 'miles' });
+    const f = form({ activity: 'running', note: 'hi there', value: '3', unit: 'miles' });
+    expect(canSaveEdit(original, f)).toBe(true);
+  });
+
+  it('is true when only activity changed', () => {
+    const original = completion({ activity: 'running', note: 'hi', value: 3, unit: 'miles' });
+    const f = form({ activity: 'cardio', note: 'hi', value: '3', unit: 'miles' });
     expect(canSaveEdit(original, f)).toBe(true);
   });
 
   it('is false when the value is present but the unit is missing', () => {
-    const original = completion({ value: null, unit: null });
-    const f = form({ value: '3', unit: null });
+    const original = completion({ activity: 'running', value: null, unit: null });
+    const f = form({ activity: 'running', value: '3', unit: null });
     expect(canSaveEdit(original, f)).toBe(false);
   });
 });

@@ -1,27 +1,30 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, isFuture, isToday } from 'date-fns';
+import { useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ApiError } from '@/api/errors';
 import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
-import { DayItem, type CompletionControl } from '@/components/DayItem';
+import { DayItem, type AmountControl, type CompletionControl } from '@/components/DayItem';
 import { Skeleton } from '@/components/Skeleton';
-import { createCompletion, deleteCompletion, invalidateCompletionsQueries } from '@/features/logs/completions';
+import { formatAmount } from '@/features/logs/units';
+import {
+  createCompletion,
+  deleteCompletion,
+  invalidateCompletionsQueries,
+  useCompletionsForDate,
+  type CompletionRead,
+} from '@/features/logs/completions';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import type { DaySchedule, ScheduleResponse } from './api';
+import { CompletionEditSheet } from './CompletionEditSheet';
+import { PENDING_COMPLETION_ID, resolveLoggedCompletion } from './dayCompletions';
 import type { EntryTarget } from './EntryActionsSheet';
 import { planWindowState, type PlanWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 import { applyOptimisticCompletion } from './scheduleCache';
-
-// A client-side placeholder while a create request is in flight, so the
-// circle fills immediately -- reconciled with the server's real id on
-// success, or rolled back entirely on failure. Never sent to the server:
-// the circle is disabled (see completionFor) for the entire time this value
-// could be visible, so a second tap can't turn it into a delete-by-this-id.
-const PENDING_COMPLETION_ID = '__pending__';
 
 function DaySkeleton() {
   return (
@@ -46,12 +49,14 @@ function DayContent({
   windowState,
   canLog,
   completionFor,
+  amountFor,
   onEntryPress,
 }: {
   day: DaySchedule | undefined;
   windowState: PlanWindowState;
   canLog: boolean;
   completionFor: (entryId: string, completionId: string | null) => CompletionControl;
+  amountFor: (name: string, control: CompletionControl) => AmountControl | undefined;
   onEntryPress: (target: EntryTarget) => void;
 }) {
   if (windowState === 'before') {
@@ -75,20 +80,25 @@ function DayContent({
 
   return (
     <View style={styles.entryList}>
-      {day.entries.map((entry) => (
-        <DayItem
-          key={entry.entry_id}
-          state={entry.status}
-          name={entry.name ?? 'Untitled'}
-          notes={entry.notes}
-          replacedName={entry.replaced?.name}
-          onPress={() => onEntryPress({ kind: 'resolved', entry })}
-          // Cancelled entries never reach here (they're rendered below, from
-          // day.cancelled, which carries no completion_id at all) -- future
-          // days are the only other place the circle must not appear.
-          completion={canLog ? completionFor(entry.entry_id, entry.completion_id) : undefined}
-        />
-      ))}
+      {day.entries.map((entry) => {
+        const name = entry.name ?? 'Untitled';
+        // Cancelled entries never reach here (they're rendered below, from
+        // day.cancelled, which carries no completion_id at all) -- future
+        // days are the only other place the circle must not appear.
+        const control = canLog ? completionFor(entry.entry_id, entry.completion_id) : undefined;
+        return (
+          <DayItem
+            key={entry.entry_id}
+            state={entry.status}
+            name={name}
+            notes={entry.notes}
+            replacedName={entry.replaced?.name}
+            onPress={() => onEntryPress({ kind: 'resolved', entry })}
+            completion={control}
+            amount={control ? amountFor(name, control) : undefined}
+          />
+        );
+      })}
       {day.cancelled.map((target) => (
         <DayItem
           key={target.entry_id}
@@ -136,6 +146,16 @@ export function DaySection({
   const dateParam = format(date, 'yyyy-MM-dd');
   const queryClient = useQueryClient();
   const scheduleKey = ['plans', planId, 'schedule'] as const;
+
+  // The schedule response only ever carries completion_id, never the amount
+  // (see useCompletionsForDate) -- this is how a logged row learns what it
+  // actually holds, so the amount affordance can render "Add amount" vs "45 min".
+  const dayCompletionsQuery = useCompletionsForDate(dateParam);
+  const completionsById = useMemo(
+    () => new Map((dayCompletionsQuery.data ?? []).map((completion) => [completion.id, completion])),
+    [dayCompletionsQuery.data],
+  );
+  const [editingCompletion, setEditingCompletion] = useState<{ completion: CompletionRead; name: string } | null>(null);
 
   const toggleMutation = useMutation<
     { entryId: string; completionId: string | null },
@@ -205,6 +225,17 @@ export function DaySection({
     };
   }
 
+  function amountFor(name: string, control: CompletionControl): AmountControl | undefined {
+    const completion = resolveLoggedCompletion(control.completionId, completionsById);
+    if (!completion) {
+      return undefined;
+    }
+    return {
+      label: formatAmount(completion.value, completion.unit) ?? 'Add amount',
+      onPress: () => setEditingCompletion({ completion, name }),
+    };
+  }
+
   return (
     <View style={styles.dayPage}>
       <View style={styles.dayHeader}>
@@ -228,6 +259,7 @@ export function DaySection({
             // about not offering a control that would only ever 422.
             canLog={!isFuture(date)}
             completionFor={completionFor}
+            amountFor={amountFor}
             onEntryPress={(target) => onRequestEntryAction(target, date)}
           />
         )}
@@ -242,6 +274,15 @@ export function DaySection({
         >
           <Text style={styles.addButtonIcon}>⊕</Text>
         </TouchableOpacity>
+      ) : null}
+
+      {editingCompletion ? (
+        <CompletionEditSheet
+          planId={planId}
+          completion={editingCompletion.completion}
+          entryName={editingCompletion.name}
+          onClose={() => setEditingCompletion(null)}
+        />
       ) : null}
     </View>
   );

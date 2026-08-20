@@ -11,8 +11,17 @@ import { DaySection } from './DaySection';
 // @/api/client -> @/lib/supabase's AsyncStorage-backed client, unavailable
 // outside a native runtime. Every test here either never fires a mutation or
 // stubs the specific call it needs, so the real client is never invoked.
+// GET defaults to an empty day (DaySection's own completions-by-date query,
+// which feeds the amount affordance -- see dayCompletions.test.ts and
+// DayItem.test.tsx for that behaviour in isolation) so tests that don't care
+// about it aren't left waiting on an unmocked call.
 jest.mock('@/api/client', () => ({
-  api: { GET: jest.fn(), POST: jest.fn(), PATCH: jest.fn(), DELETE: jest.fn() },
+  api: {
+    GET: jest.fn().mockResolvedValue({ data: [], response: { ok: true, status: 200 } }),
+    POST: jest.fn(),
+    PATCH: jest.fn(),
+    DELETE: jest.fn(),
+  },
 }));
 
 function deferred<T>() {

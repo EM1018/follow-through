@@ -10,6 +10,12 @@ export type CompletionForm = {
   note: string;
 };
 
+export function formsEqual(a: CompletionForm, b: CompletionForm): boolean {
+  return (
+    a.activity === b.activity && a.value === b.value && a.unit === b.unit && a.onDate === b.onDate && a.note === b.note
+  );
+}
+
 function isValidAmount(value: string, unit: Unit | null): boolean {
   const trimmed = value.trim();
   if (trimmed === '') {
@@ -77,9 +83,18 @@ export function buildCreatePayload(form: CompletionForm): CompletionCreate {
   };
 }
 
-/** Only fields that actually changed -- clearing the value nulls both value and unit rather than omitting them. */
+/**
+ * Only fields that actually changed -- clearing the value nulls both value
+ * and unit rather than omitting them. activity is diffed the same way: a
+ * different activity is the same event (unlike a different date, which isn't
+ * part of this form at all), so PATCHing it is just another field edit.
+ */
 export function buildPatch(original: CompletionRead, form: CompletionForm): CompletionUpdate {
   const patch: CompletionUpdate = {};
+
+  if (form.activity !== original.activity) {
+    patch.activity = form.activity;
+  }
 
   const trimmedNote = form.note.trim();
   const originalNote = original.note ?? '';

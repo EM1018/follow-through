@@ -1,7 +1,7 @@
-import type { QueryClient } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
-import { unwrap } from '@/api/errors';
+import { unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
 
 import type { DateRange } from './window';
@@ -52,4 +52,22 @@ export function updateCompletion(id: string, patch: CompletionUpdate): Promise<C
       body: patch,
     }),
   );
+}
+
+/**
+ * A single day's completions -- the schedule response only ever carries
+ * `completion_id` (see ResolvedEntryRead: one recurring entry has completions
+ * on many different dates, so it can't carry a single amount itself). This is
+ * how a schedule row learns the amount/activity/note of what it logged, keyed
+ * under the same 'completions' prefix so invalidateCompletionsQueries covers it too.
+ */
+export function useCompletionsForDate(dateParam: string) {
+  return useQuery<CompletionRead[], ApiError>({
+    queryKey: [...COMPLETIONS_QUERY_KEY, 'byDate', dateParam] as const,
+    queryFn: () => listCompletions({ from: dateParam, to: dateParam }),
+    // Supplementary, not load-bearing -- the circle and the row itself come
+    // from the schedule query. If this one fails, the amount affordance just
+    // doesn't appear rather than retrying aggressively for a "nice to have".
+    retry: false,
+  });
 }
