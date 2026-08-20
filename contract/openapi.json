@@ -75,6 +75,261 @@
         "title": "ActivityInfo",
         "type": "object"
       },
+      "BlockRead": {
+        "properties": {
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "sessions_done": {
+            "title": "Sessions Done",
+            "type": "integer"
+          },
+          "sessions_required": {
+            "title": "Sessions Required",
+            "type": "integer"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BlockStatus"
+          }
+        },
+        "required": [
+          "index",
+          "starts_on",
+          "ends_on",
+          "sessions_done",
+          "sessions_required",
+          "status"
+        ],
+        "title": "BlockRead",
+        "type": "object"
+      },
+      "BlockStatus": {
+        "enum": [
+          "passed",
+          "in_progress",
+          "missed"
+        ],
+        "title": "BlockStatus",
+        "type": "string"
+      },
+      "CommitmentCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Activity"
+          },
+          "duration_weeks": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Weeks"
+          },
+          "sessions_per_week": {
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Sessions Per Week",
+            "type": "integer"
+          },
+          "target_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_value": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Value"
+          }
+        },
+        "required": [
+          "activity",
+          "sessions_per_week"
+        ],
+        "title": "CommitmentCreate",
+        "type": "object"
+      },
+      "CommitmentRead": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Activity"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "creator_id": {
+            "format": "uuid",
+            "title": "Creator Id",
+            "type": "string"
+          },
+          "duration_weeks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Weeks"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invite_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InviteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ProgressRead"
+          },
+          "recipient_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Id"
+          },
+          "rematch_of_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rematch Of Id"
+          },
+          "sessions_per_week": {
+            "title": "Sessions Per Week",
+            "type": "integer"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "target_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Value"
+          }
+        },
+        "required": [
+          "id",
+          "creator_id",
+          "recipient_id",
+          "activity",
+          "target_value",
+          "target_unit",
+          "sessions_per_week",
+          "duration_weeks",
+          "starts_on",
+          "invite_status",
+          "rematch_of_id",
+          "created_at",
+          "progress"
+        ],
+        "title": "CommitmentRead",
+        "type": "object"
+      },
+      "CommitmentsListResponse": {
+        "properties": {
+          "active": {
+            "items": {
+              "$ref": "#/components/schemas/CommitmentRead"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "finished": {
+            "items": {
+              "$ref": "#/components/schemas/CommitmentRead"
+            },
+            "title": "Finished",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "finished"
+        ],
+        "title": "CommitmentsListResponse",
+        "type": "object"
+      },
       "CompletionCreate": {
         "additionalProperties": false,
         "properties": {
@@ -408,6 +663,16 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InviteStatus": {
+        "description": "Challenge-only - stays NULL for every goal (see ck_commitments_goal_shape).\nNothing writes this until Stage 3 wires up the invite flow; the column and\nits native Postgres enum type exist now so that stage needs no migration\nof its own.",
+        "enum": [
+          "pending",
+          "accepted",
+          "declined"
+        ],
+        "title": "InviteStatus",
+        "type": "string"
+      },
       "PlanCreate": {
         "additionalProperties": false,
         "properties": {
@@ -576,6 +841,42 @@
           }
         },
         "title": "PlanUpdate",
+        "type": "object"
+      },
+      "ProgressRead": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/BlockRead"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "current_streak": {
+            "title": "Current Streak",
+            "type": "integer"
+          },
+          "longest_streak": {
+            "title": "Longest Streak",
+            "type": "integer"
+          },
+          "weeks_passed": {
+            "title": "Weeks Passed",
+            "type": "integer"
+          },
+          "weeks_total": {
+            "title": "Weeks Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blocks",
+          "current_streak",
+          "longest_streak",
+          "weeks_passed",
+          "weeks_total"
+        ],
+        "title": "ProgressRead",
         "type": "object"
       },
       "ResolvedEntryRead": {
@@ -1248,6 +1549,163 @@
         "summary": "List Activities",
         "tags": [
           "activities"
+        ]
+      }
+    },
+    "/commitments": {
+      "get": {
+        "operationId": "list_commitments_commitments_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitmentsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Commitments",
+        "tags": [
+          "commitments"
+        ]
+      },
+      "post": {
+        "operationId": "create_commitment_commitments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitmentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Commitment",
+        "tags": [
+          "commitments"
+        ]
+      }
+    },
+    "/commitments/{commitment_id}": {
+      "delete": {
+        "operationId": "delete_commitment_commitments__commitment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "commitment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Commitment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Commitment",
+        "tags": [
+          "commitments"
+        ]
+      },
+      "get": {
+        "operationId": "get_commitment_commitments__commitment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "commitment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Commitment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Commitment",
+        "tags": [
+          "commitments"
         ]
       }
     },

@@ -26,6 +26,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/commitments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Commitments */
+        get: operations["list_commitments_commitments_get"];
+        put?: never;
+        /** Create Commitment */
+        post: operations["create_commitment_commitments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commitments/{commitment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Commitment */
+        get: operations["get_commitment_commitments__commitment_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Commitment */
+        delete: operations["delete_commitment_commitments__commitment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/completions": {
         parameters: {
             query?: never;
@@ -247,6 +283,83 @@ export interface components {
             /** Units */
             units: components["schemas"]["Unit"][];
         };
+        /** BlockRead */
+        BlockRead: {
+            /**
+             * Ends On
+             * Format: date
+             */
+            ends_on: string;
+            /** Index */
+            index: number;
+            /** Sessions Done */
+            sessions_done: number;
+            /** Sessions Required */
+            sessions_required: number;
+            /**
+             * Starts On
+             * Format: date
+             */
+            starts_on: string;
+            status: components["schemas"]["BlockStatus"];
+        };
+        /**
+         * BlockStatus
+         * @enum {string}
+         */
+        BlockStatus: "passed" | "in_progress" | "missed";
+        /** CommitmentCreate */
+        CommitmentCreate: {
+            activity: components["schemas"]["Activity"];
+            /** Duration Weeks */
+            duration_weeks?: number | null;
+            /** Sessions Per Week */
+            sessions_per_week: number;
+            target_unit?: components["schemas"]["Unit"] | null;
+            /** Target Value */
+            target_value?: number | string | null;
+        };
+        /** CommitmentRead */
+        CommitmentRead: {
+            activity: components["schemas"]["Activity"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Creator Id
+             * Format: uuid
+             */
+            creator_id: string;
+            /** Duration Weeks */
+            duration_weeks: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            invite_status: components["schemas"]["InviteStatus"] | null;
+            progress: components["schemas"]["ProgressRead"];
+            /** Recipient Id */
+            recipient_id: string | null;
+            /** Rematch Of Id */
+            rematch_of_id: string | null;
+            /** Sessions Per Week */
+            sessions_per_week: number;
+            /** Starts On */
+            starts_on: string | null;
+            target_unit: components["schemas"]["Unit"] | null;
+            /** Target Value */
+            target_value: number | null;
+        };
+        /** CommitmentsListResponse */
+        CommitmentsListResponse: {
+            /** Active */
+            active: components["schemas"]["CommitmentRead"][];
+            /** Finished */
+            finished: components["schemas"]["CommitmentRead"][];
+        };
         /** CompletionCreate */
         CompletionCreate: {
             activity?: components["schemas"]["Activity"] | null;
@@ -372,6 +485,15 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * InviteStatus
+         * @description Challenge-only - stays NULL for every goal (see ck_commitments_goal_shape).
+         *     Nothing writes this until Stage 3 wires up the invite flow; the column and
+         *     its native Postgres enum type exist now so that stage needs no migration
+         *     of its own.
+         * @enum {string}
+         */
+        InviteStatus: "pending" | "accepted" | "declined";
         /** PlanCreate */
         PlanCreate: {
             /** Ends On */
@@ -437,6 +559,19 @@ export interface components {
             starts_on?: string | null;
             /** Visible To Friends */
             visible_to_friends?: boolean | null;
+        };
+        /** ProgressRead */
+        ProgressRead: {
+            /** Blocks */
+            blocks: components["schemas"]["BlockRead"][];
+            /** Current Streak */
+            current_streak: number;
+            /** Longest Streak */
+            longest_streak: number;
+            /** Weeks Passed */
+            weeks_passed: number;
+            /** Weeks Total */
+            weeks_total: number;
         };
         /** ResolvedEntryRead */
         ResolvedEntryRead: {
@@ -633,6 +768,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivitiesResponse"];
+                };
+            };
+        };
+    };
+    list_commitments_commitments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentsListResponse"];
+                };
+            };
+        };
+    };
+    create_commitment_commitments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommitmentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_commitment_commitments__commitment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commitment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_commitment_commitments__commitment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commitment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

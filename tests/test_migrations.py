@@ -7,6 +7,7 @@ from alembic.script import ScriptDirectory
 from sqlmodel import SQLModel
 
 from app.models import (  # noqa: F401  (register on metadata)
+    commitment,
     completion,
     plan,
     schedule_entry,

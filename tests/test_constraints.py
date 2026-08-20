@@ -6,6 +6,7 @@ request schemas or routers validate.
 
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.models.commitment import Commitment, InviteStatus
 from app.models.completion import Completion, CompletionSource
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
@@ -745,3 +747,117 @@ async def test_deleting_user_cascades_to_completions(session: AsyncSession) -> N
 
     result = await session.exec(select(Completion).where(Completion.id == completion_id))
     assert list(result) == []
+
+
+# Commitments
+
+
+@pytest_asyncio.fixture
+async def _commitment_creator(session: AsyncSession) -> User:
+    user = User(id=uuid.uuid4(), email="commitments@example.com")
+    session.add(user)
+    await session.commit()
+    return user
+
+
+def _valid_goal_kwargs(creator_id: uuid.UUID) -> dict:
+    """A minimal, fully-valid goal - every backstop test below mutates exactly
+    one field away from this baseline to isolate the single CHECK it exercises.
+    """
+    return {
+        "creator_id": creator_id,
+        "activity": "running",
+        "sessions_per_week": 3,
+        "starts_on": date(2026, 8, 10),
+    }
+
+
+async def test_target_value_without_target_unit_violates_both_or_neither_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(
+        **_valid_goal_kwargs(_commitment_creator.id), target_value=Decimal("5"), target_unit=None
+    )
+    await _assert_violates(session, commitment, "ck_commitments_target_both_or_neither")
+
+
+async def test_target_unit_without_target_value_violates_both_or_neither_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(
+        **_valid_goal_kwargs(_commitment_creator.id), target_value=None, target_unit="miles"
+    )
+    await _assert_violates(session, commitment, "ck_commitments_target_both_or_neither")
+
+
+async def test_target_value_zero_violates_positive_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(
+        **_valid_goal_kwargs(_commitment_creator.id),
+        target_value=Decimal("0"),
+        target_unit="miles",
+    )
+    await _assert_violates(session, commitment, "ck_commitments_target_value_positive")
+
+
+async def test_sessions_per_week_above_range_violates_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    kwargs = _valid_goal_kwargs(_commitment_creator.id)
+    kwargs["sessions_per_week"] = 8
+    commitment = Commitment(**kwargs)
+    await _assert_violates(session, commitment, "ck_commitments_sessions_per_week_range")
+
+
+async def test_sessions_per_week_below_range_violates_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    kwargs = _valid_goal_kwargs(_commitment_creator.id)
+    kwargs["sessions_per_week"] = 0
+    commitment = Commitment(**kwargs)
+    await _assert_violates(session, commitment, "ck_commitments_sessions_per_week_range")
+
+
+async def test_duration_weeks_above_range_violates_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(**_valid_goal_kwargs(_commitment_creator.id), duration_weeks=9)
+    await _assert_violates(session, commitment, "ck_commitments_duration_weeks_range")
+
+
+async def test_duration_weeks_below_range_violates_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(**_valid_goal_kwargs(_commitment_creator.id), duration_weeks=0)
+    await _assert_violates(session, commitment, "ck_commitments_duration_weeks_range")
+
+
+async def test_goal_with_no_starts_on_violates_goal_shape_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    kwargs = _valid_goal_kwargs(_commitment_creator.id)
+    kwargs["starts_on"] = None
+    commitment = Commitment(**kwargs)
+    await _assert_violates(session, commitment, "ck_commitments_goal_shape")
+
+
+async def test_goal_with_invite_status_violates_goal_shape_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment = Commitment(
+        **_valid_goal_kwargs(_commitment_creator.id), invite_status=InviteStatus.PENDING
+    )
+    await _assert_violates(session, commitment, "ck_commitments_goal_shape")
+
+
+async def test_rematch_of_self_violates_check(
+    session: AsyncSession, _commitment_creator: User
+) -> None:
+    commitment_id = uuid.uuid4()
+    commitment = Commitment(
+        id=commitment_id,
+        **_valid_goal_kwargs(_commitment_creator.id),
+        rematch_of_id=commitment_id,
+    )
+    await _assert_violates(session, commitment, "ck_commitments_rematch_not_self")
