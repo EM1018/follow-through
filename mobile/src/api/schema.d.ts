@@ -62,6 +62,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/commitments/{commitment_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End Commitment */
+        post: operations["end_commitment_commitments__commitment_id__end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/completions": {
         parameters: {
             query?: never;
@@ -129,7 +146,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Me */
+        patch: operations["update_me_me_patch"];
         trace?: never;
     };
     "/plans": {
@@ -334,6 +352,8 @@ export interface components {
             creator_id: string;
             /** Duration Weeks */
             duration_weeks: number | null;
+            /** Ended On */
+            ended_on: string | null;
             /**
              * Id
              * Format: uuid
@@ -494,6 +514,32 @@ export interface components {
          * @enum {string}
          */
         InviteStatus: "pending" | "accepted" | "declined";
+        /** MeRead */
+        MeRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Timezone */
+            timezone: string;
+            /** Username */
+            username: string | null;
+        };
+        /** MeUpdate */
+        MeUpdate: {
+            /** Timezone */
+            timezone?: string | null;
+            /** Username */
+            username?: string | null;
+        };
         /** PlanCreate */
         PlanCreate: {
             /** Ends On */
@@ -673,23 +719,6 @@ export interface components {
         UnitInfo: {
             dimension: components["schemas"]["Dimension"];
             unit: components["schemas"]["Unit"];
-        };
-        /** User */
-        User: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Email */
-            email: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Username */
-            username?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -885,6 +914,37 @@ export interface operations {
             };
         };
     };
+    end_commitment_commitments__commitment_id__end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commitment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_completions_completions_get: {
         parameters: {
             query: {
@@ -1052,7 +1112,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["User"];
+                    "application/json": components["schemas"]["MeRead"];
+                };
+            };
+        };
+    };
+    update_me_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

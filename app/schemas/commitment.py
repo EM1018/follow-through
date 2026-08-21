@@ -66,6 +66,7 @@ class CommitmentRead(BaseModel):
     sessions_per_week: int
     duration_weeks: int | None
     starts_on: date | None
+    ended_on: date | None
     invite_status: InviteStatus | None
     rematch_of_id: uuid.UUID | None
     created_at: datetime

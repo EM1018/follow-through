@@ -118,12 +118,19 @@ def compute_progress(
     starts_on = commitment.starts_on
     assert starts_on is not None  # goals always have one - ck_commitments_goal_shape
 
-    current_index = (today - starts_on).days // 7
-
-    if commitment.duration_weeks is not None:
+    if commitment.ended_on is not None:
+        # Only fully-elapsed blocks (ends_on <= ended_on) survive - one still
+        # open when the goal ended is dropped entirely, never stamped missed.
+        # duration_weeks and `today` are both ignored here: an ended goal is
+        # finished as of ended_on, full stop, regardless of either.
+        max_index = (commitment.ended_on - starts_on - timedelta(days=6)).days // 7
+        weeks_total = max_index + 1 if max_index >= 0 else 0
+    elif commitment.duration_weeks is not None:
+        current_index = (today - starts_on).days // 7
         max_index = min(current_index, commitment.duration_weeks - 1)
         weeks_total = commitment.duration_weeks
     else:
+        current_index = (today - starts_on).days // 7
         max_index = current_index
         weeks_total = current_index + 1
 
@@ -137,9 +144,12 @@ def compute_progress(
         # today) is IN_PROGRESS, already elapsed and short is MISSED. Blocks
         # entirely after today are never constructed at all (max_index caps
         # the loop), so there is no third, future-dated case to handle here.
+        # An ended commitment can never be IN_PROGRESS - every block emitted
+        # above already ended on or before ended_on, so there's no more time
+        # left for it to still be open.
         if sessions_done >= commitment.sessions_per_week:
             status = BlockStatus.PASSED
-        elif block_starts_on <= today <= block_ends_on:
+        elif commitment.ended_on is None and block_starts_on <= today <= block_ends_on:
             status = BlockStatus.IN_PROGRESS
         else:
             status = BlockStatus.MISSED

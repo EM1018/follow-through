@@ -7,13 +7,15 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
-from app.deps import CurrentUser, get_current_user
+from app.deps import CurrentUser, get_current_db_user, get_current_user
 from app.models.completion import Completion, CompletionSource
 from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
+from app.models.user import User
 from app.models.workout import Workout
 from app.schemas.completion import CompletionCreate, CompletionRead, CompletionUpdate
 from app.services.activities import ACTIVITY_UNITS, DISPLAY_NAMES, Activity, Unit
+from app.services.dates import user_today
 
 router = APIRouter(prefix="/completions", tags=["completions"])
 
@@ -79,13 +81,19 @@ def _derive_label(
 @router.post("", response_model=CompletionRead, status_code=status.HTTP_201_CREATED)
 async def create_completion(
     body: CompletionCreate,
-    current_user: CurrentUser = Depends(get_current_user),
+    db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
 ) -> Completion:
+    if body.on_date > user_today(db_user):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="on_date cannot be in the future",
+        )
+
     entry: ScheduleEntry | None = None
     workout: Workout | None = None
     if body.schedule_entry_id is not None:
-        entry = await _get_owned_entry(session, body.schedule_entry_id, current_user.user_id)
+        entry = await _get_owned_entry(session, body.schedule_entry_id, db_user.id)
         if entry.workout_id is not None:
             workout = await session.get(Workout, entry.workout_id)
 
@@ -107,7 +115,7 @@ async def create_completion(
     activity = _derive_activity(workout, body.activity)
 
     completion = Completion(
-        user_id=current_user.user_id,
+        user_id=db_user.id,
         activity=activity.value if activity is not None else None,
         value=body.value,
         unit=body.unit.value if body.unit is not None else None,

@@ -20,6 +20,7 @@ def _commitment(
     target_value: str | None = None,
     target_unit: str | None = None,
     duration_weeks: int | None = None,
+    ended_on: date | None = None,
 ) -> Commitment:
     return Commitment(
         creator_id=uuid.uuid4(),
@@ -29,6 +30,7 @@ def _commitment(
         sessions_per_week=sessions_per_week,
         duration_weeks=duration_weeks,
         starts_on=starts_on,
+        ended_on=ended_on,
     )
 
 
@@ -242,3 +244,62 @@ def test_fixed_length_goal_weeks_total_equals_duration_weeks() -> None:
     commitment = _commitment(starts_on=starts_on, duration_weeks=6)
     progress = compute_progress(commitment, [], today=starts_on)
     assert progress.weeks_total == 6
+
+
+# Ending a goal
+
+
+def test_ended_mid_week_drops_the_open_block_and_weeks_total_counts_complete_only() -> None:
+    starts_on = date(2026, 1, 5)  # block 0: Jan 5-11
+    commitment = _commitment(starts_on=starts_on, ended_on=starts_on + timedelta(days=3))
+    progress = compute_progress(commitment, [], today=starts_on + timedelta(days=3))
+    assert progress.blocks == []
+    assert progress.weeks_total == 0
+
+
+def test_ended_on_exact_last_day_of_a_block_emits_that_block() -> None:
+    starts_on = date(2026, 1, 5)  # block 0 ends Jan 11
+    ended_on = starts_on + timedelta(days=6)
+    commitment = _commitment(starts_on=starts_on, sessions_per_week=1, ended_on=ended_on)
+    completion = _completion(on_date=starts_on)  # hits the target so it's PASSED, not dropped
+    progress = compute_progress(commitment, [completion], today=ended_on)
+    assert len(progress.blocks) == 1
+    assert progress.blocks[0].ends_on == ended_on
+    assert progress.weeks_total == 1
+
+
+def test_ending_a_fixed_length_goal_early_behaves_the_same_as_ongoing() -> None:
+    starts_on = date(2026, 1, 5)
+    ended_on = starts_on + timedelta(days=6)
+    commitment = _commitment(
+        starts_on=starts_on, sessions_per_week=1, duration_weeks=8, ended_on=ended_on
+    )
+    completion = _completion(on_date=starts_on)
+    progress = compute_progress(commitment, [completion], today=ended_on)
+    assert len(progress.blocks) == 1
+    assert progress.weeks_total == 1
+
+
+def test_ended_commitment_has_no_in_progress_block_even_when_today_is_mid_block() -> None:
+    """today lands squarely inside what would have been the next block, which
+    would normally be IN_PROGRESS - but the goal ended before that block
+    started, so it must never be emitted at all, let alone as in-progress.
+    """
+    starts_on = date(2026, 1, 5)
+    ended_on = starts_on + timedelta(days=6)  # ends right at the close of block 0
+    commitment = _commitment(starts_on=starts_on, sessions_per_week=5, ended_on=ended_on)
+    progress = compute_progress(commitment, [], today=starts_on + timedelta(days=10))
+    assert all(block.status != BlockStatus.IN_PROGRESS for block in progress.blocks)
+
+
+def test_ended_short_block_is_missed_not_dropped_when_it_actually_completed() -> None:
+    """Ending exactly on a block's last day without having hit the target:
+    the block is still emitted (ends_on <= ended_on holds), just as MISSED
+    rather than IN_PROGRESS.
+    """
+    starts_on = date(2026, 1, 5)
+    ended_on = starts_on + timedelta(days=6)
+    commitment = _commitment(starts_on=starts_on, sessions_per_week=5, ended_on=ended_on)
+    progress = compute_progress(commitment, [], today=ended_on)
+    assert len(progress.blocks) == 1
+    assert progress.blocks[0].status == BlockStatus.MISSED

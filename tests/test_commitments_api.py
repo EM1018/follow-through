@@ -1,5 +1,7 @@
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 from httpx import AsyncClient
@@ -8,7 +10,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.deps import CurrentUser, get_current_user
 from app.main import app
+from app.models.commitment import Commitment
 from app.models.completion import Completion
+from app.models.user import User
+from app.services import dates
 
 
 def _switch_user(user: CurrentUser) -> None:
@@ -74,6 +79,29 @@ async def test_create_goal_with_target(authed_client: tuple[AsyncClient, Current
     assert body["progress"]["current_streak"] == 0
     assert body["progress"]["longest_streak"] == 0
     assert body["progress"]["weeks_passed"] == 0
+
+
+async def test_starts_on_uses_the_users_own_timezone_not_utc(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    session: AsyncSession,
+) -> None:
+    """The permanent-damage case: starts_on is written once at creation, so a
+    wrong UTC date here would stick forever, not just be wrong for a day.
+    """
+    client, me = authed_client
+    user = await session.get(User, me.user_id)
+    user.timezone = "America/Los_Angeles"
+    session.add(user)
+    await session.commit()
+
+    # 2026-08-09 02:00 UTC = 2026-08-08 19:00 in Los Angeles (PDT, UTC-7).
+    instant = datetime(2026, 8, 9, 2, 0, tzinfo=UTC)
+
+    with patch.object(dates, "_now", return_value=instant):
+        response = await client.post("/commitments", json=_commitment_payload())
+
+    assert response.status_code == 201, response.text
+    assert response.json()["starts_on"] == "2026-08-08"
 
 
 async def test_create_goal_with_no_target(authed_client: tuple[AsyncClient, CurrentUser]) -> None:
@@ -293,3 +321,119 @@ async def test_non_matching_completion_is_excluded_from_progress(
 
     result = await session.exec(select(Completion).where(Completion.id == not_matching_id))
     assert result.one().user_id == me.user_id
+
+
+# Ending a goal
+
+
+async def test_end_ongoing_goal_sets_ended_on_and_moves_it_to_finished(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    created = await client.post("/commitments", json=_commitment_payload())
+    commitment_id = created.json()["id"]
+
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_on"] == _today()
+
+    listing = await client.get("/commitments")
+    finished_ids = {c["id"] for c in listing.json()["finished"]}
+    active_ids = {c["id"] for c in listing.json()["active"]}
+    assert commitment_id in finished_ids
+    assert commitment_id not in active_ids
+
+
+async def test_ending_a_fixed_length_goal_early_works_the_same_way(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    created = await client.post(
+        "/commitments", json=_commitment_payload(duration_weeks=8)
+    )
+    commitment_id = created.json()["id"]
+
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_on"] == _today()
+
+
+async def test_ending_an_already_ended_goal_is_409(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    created = await client.post("/commitments", json=_commitment_payload())
+    commitment_id = created.json()["id"]
+
+    first = await client.post(f"/commitments/{commitment_id}/end")
+    assert first.status_code == 200, first.text
+
+    second = await client.post(f"/commitments/{commitment_id}/end")
+    assert second.status_code == 409
+
+
+async def test_ending_another_users_goal_is_404(
+    authed_client: tuple[AsyncClient, CurrentUser], second_user: CurrentUser
+) -> None:
+    client, me = authed_client
+    created = await client.post("/commitments", json=_commitment_payload())
+    commitment_id = created.json()["id"]
+
+    _switch_user(second_user)
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 404
+
+    _switch_user(me)
+
+
+async def test_ending_a_goal_already_finished_by_duration_is_409(
+    authed_client: tuple[AsyncClient, CurrentUser], session: AsyncSession
+) -> None:
+    client, _me = authed_client
+    created = await client.post(
+        "/commitments", json=_commitment_payload(duration_weeks=1)
+    )
+    commitment_id = created.json()["id"]
+
+    # Force it into "already finished" territory - duration_weeks=1 means the
+    # single block's last day is starts_on + 6; back-date starts_on so that's
+    # already in the past, the same way _is_finished checks it.
+    commitment = await session.get(Commitment, uuid.UUID(commitment_id))
+    commitment.starts_on = commitment.starts_on - timedelta(days=30)
+    session.add(commitment)
+    await session.commit()
+
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 409
+
+
+async def test_ending_does_not_touch_completions(
+    authed_client: tuple[AsyncClient, CurrentUser], session: AsyncSession
+) -> None:
+    client, _me = authed_client
+    created = await client.post("/commitments", json=_commitment_payload())
+    commitment_id = created.json()["id"]
+
+    logged = await client.post("/completions", json=_completion_payload())
+    completion_id = logged.json()["id"]
+
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 200, response.text
+
+    result = await session.exec(select(Completion).where(Completion.id == completion_id))
+    completion = result.one()
+    assert completion.on_date == date.fromisoformat(_today())
+
+
+async def test_ending_does_not_change_duration_weeks(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    created = await client.post(
+        "/commitments", json=_commitment_payload(duration_weeks=8)
+    )
+    commitment_id = created.json()["id"]
+
+    response = await client.post(f"/commitments/{commitment_id}/end")
+    assert response.status_code == 200, response.text
+    assert response.json()["duration_weeks"] == 8

@@ -111,6 +111,19 @@ async def get_current_user(
     return CurrentUser(user_id=user_id, email=email)
 
 
+async def get_current_db_user(
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """The full users row for the authenticated caller, needed anywhere a
+    request has to read the user's stored timezone. get_current_user's
+    upsert above guarantees this row exists by the time this runs.
+    """
+    user = await session.get(User, current_user.user_id)
+    assert user is not None
+    return user
+
+
 async def get_owned_plan(
     plan_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,6 +13,8 @@ from app.deps import CurrentUser, get_current_user
 from app.main import app
 from app.models.completion import Completion
 from app.models.schedule_entry import ScheduleEntry
+from app.models.user import User
+from app.services import dates
 
 TODAY = datetime.now(UTC).date()
 YESTERDAY = TODAY - timedelta(days=1)
@@ -153,6 +156,38 @@ async def test_on_date_tomorrow_is_422(
         "/completions", json={"activity": "running", "on_date": str(TOMORROW)}
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_on_date_uses_the_users_own_timezone_not_utc(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    session: AsyncSession,
+) -> None:
+    """The worked example from the timezone bug: 9pm Saturday in Los Angeles
+    is already Sunday in UTC. A UTC-only "today" would reject Saturday's own
+    date as being in the future; the fix must accept it.
+    """
+    client, me = authed_client
+    user = await session.get(User, me.user_id)
+    user.timezone = "America/Los_Angeles"
+    session.add(user)
+    await session.commit()
+
+    # 2026-08-09 02:00 UTC = 2026-08-08 19:00 in Los Angeles (PDT, UTC-7).
+    instant = datetime(2026, 8, 9, 2, 0, tzinfo=UTC)
+    la_today = "2026-08-08"
+    utc_today = "2026-08-09"
+
+    with patch.object(dates, "_now", return_value=instant):
+        accepted = await client.post(
+            "/completions", json={"activity": "running", "on_date": la_today}
+        )
+        assert accepted.status_code == 201, accepted.text
+
+        rejected = await client.post(
+            "/completions", json={"activity": "running", "on_date": utc_today}
+        )
+        assert rejected.status_code == 422
 
 
 @pytest.mark.asyncio

@@ -1,15 +1,11 @@
 import uuid
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.completion import CompletionSource
 from app.services.activities import ACTIVITY_UNITS, Activity, Unit
-
-
-def _today() -> date:
-    return datetime.now(UTC).date()
 
 
 class CompletionCreate(BaseModel):
@@ -27,8 +23,9 @@ class CompletionCreate(BaseModel):
         if (self.value is None) != (self.unit is None):
             raise ValueError("value and unit must be set together")
 
-        if self.on_date > _today():
-            raise ValueError("on_date cannot be in the future")
+        # The future-date check needs the caller's timezone (users.timezone),
+        # which this schema has no access to - it lives in the router
+        # (create_completion), against user_today(), instead.
 
         # No permitted set to check against when activity is null - a workout
         # with no activity can still record an amount, it just satisfies no goal.

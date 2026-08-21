@@ -1,15 +1,16 @@
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db import get_session
-from app.deps import CurrentUser, get_current_user
+from app.deps import CurrentUser, get_current_db_user, get_current_user
 from app.models.commitment import Commitment
 from app.models.completion import Completion
+from app.models.user import User
 from app.schemas.commitment import (
     CommitmentCreate,
     CommitmentRead,
@@ -17,6 +18,7 @@ from app.schemas.commitment import (
     ProgressRead,
 )
 from app.services.commitments import compute_progress
+from app.services.dates import user_today
 
 router = APIRouter(prefix="/commitments", tags=["commitments"])
 
@@ -30,6 +32,8 @@ def _last_block_end(commitment: Commitment) -> date | None:
 
 
 def _is_finished(commitment: Commitment, today: date) -> bool:
+    if commitment.ended_on is not None:
+        return True
     last_block_end = _last_block_end(commitment)
     return last_block_end is not None and today > last_block_end
 
@@ -50,6 +54,7 @@ def _read_commitment(
         sessions_per_week=commitment.sessions_per_week,
         duration_weeks=commitment.duration_weeks,
         starts_on=commitment.starts_on,
+        ended_on=commitment.ended_on,
         invite_status=commitment.invite_status,
         rematch_of_id=commitment.rematch_of_id,
         created_at=commitment.created_at,
@@ -85,12 +90,12 @@ async def _get_owned_commitment(
 @router.post("", response_model=CommitmentRead, status_code=status.HTTP_201_CREATED)
 async def create_commitment(
     body: CommitmentCreate,
-    current_user: CurrentUser = Depends(get_current_user),
+    db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
 ) -> CommitmentRead:
-    today = datetime.now(UTC).date()
+    today = user_today(db_user)
     commitment = Commitment(
-        creator_id=current_user.user_id,
+        creator_id=db_user.id,
         recipient_id=None,
         activity=body.activity.value,
         target_value=body.target_value,
@@ -111,13 +116,13 @@ async def create_commitment(
 
 @router.get("", response_model=CommitmentsListResponse)
 async def list_commitments(
-    current_user: CurrentUser = Depends(get_current_user),
+    db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
 ) -> CommitmentsListResponse:
-    today = datetime.now(UTC).date()
+    today = user_today(db_user)
     result = await session.exec(
         select(Commitment).where(
-            Commitment.creator_id == current_user.user_id,
+            Commitment.creator_id == db_user.id,
             Commitment.recipient_id.is_(None),  # goals only - Stage 2 scope
         )
     )
@@ -126,7 +131,7 @@ async def list_commitments(
     active = [c for c in commitments if not _is_finished(c, today)]
     finished = [c for c in commitments if _is_finished(c, today)]
     active.sort(key=lambda c: c.created_at, reverse=True)
-    finished.sort(key=lambda c: _last_block_end(c) or date.min, reverse=True)
+    finished.sort(key=lambda c: c.ended_on or _last_block_end(c) or date.min, reverse=True)
 
     return CommitmentsListResponse(
         active=[await _build_read(session, c, today) for c in active],
@@ -137,9 +142,31 @@ async def list_commitments(
 @router.get("/{commitment_id}", response_model=CommitmentRead)
 async def get_commitment(
     commitment: Commitment = Depends(_get_owned_commitment),
+    db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
 ) -> CommitmentRead:
-    today = datetime.now(UTC).date()
+    today = user_today(db_user)
+    return await _build_read(session, commitment, today)
+
+
+@router.post("/{commitment_id}/end", response_model=CommitmentRead)
+async def end_commitment(
+    commitment: Commitment = Depends(_get_owned_commitment),
+    db_user: User = Depends(get_current_db_user),
+    session: AsyncSession = Depends(get_session),
+) -> CommitmentRead:
+    # Ending is a state transition, not an edit - terms (duration_weeks,
+    # sessions_per_week, ...) are frozen at creation and stay that way here.
+    today = user_today(db_user)
+    if commitment.ended_on is not None or _is_finished(commitment, today):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Commitment has already ended"
+        )
+
+    commitment.ended_on = today
+    session.add(commitment)
+    await session.commit()
+    await session.refresh(commitment)
     return await _build_read(session, commitment, today)
 
 

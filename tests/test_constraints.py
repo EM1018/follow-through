@@ -405,14 +405,32 @@ async def test_on_date_with_ends_on_violates_dated_has_no_bounds(
 
 
 async def test_duplicate_username_violates_unique_index(session: AsyncSession) -> None:
-    """username is never set through any endpoint at all (no schema exposes
-    it), so this uniqueness guarantee was completely untested anywhere else.
-    """
     session.add(User(id=uuid.uuid4(), email="a@example.com", username="sam"))
     await session.commit()
 
     duplicate = User(id=uuid.uuid4(), email="b@example.com", username="sam")
     await _assert_violates(session, duplicate, "ix_users_username")
+
+
+async def test_uppercase_username_violates_format_check(session: AsyncSession) -> None:
+    """PATCH /me lowercases before this is ever reached - this is the backstop
+    for anything that writes the column directly instead.
+    """
+    user = User(id=uuid.uuid4(), email="uppercase@example.com", username="AB1")
+    await _assert_violates(session, user, "ck_users_username_format")
+
+
+async def test_too_short_username_violates_format_check(session: AsyncSession) -> None:
+    user = User(id=uuid.uuid4(), email="short@example.com", username="ab")
+    await _assert_violates(session, user, "ck_users_username_format")
+
+
+async def test_user_without_timezone_defaults_to_utc(session: AsyncSession) -> None:
+    user = User(id=uuid.uuid4(), email="notz@example.com")
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    assert user.timezone == "UTC"
 
 
 async def test_deleting_user_cascades_to_plans(session: AsyncSession) -> None:

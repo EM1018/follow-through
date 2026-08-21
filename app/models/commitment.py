@@ -83,6 +83,10 @@ class Commitment(SQLModel, table=True):
     rematch_of_id: uuid.UUID | None = Field(
         default=None, foreign_key="commitments.id", ondelete="SET NULL"
     )
+    # NULL = not ended early. Deliberately doesn't touch duration_weeks - an
+    # ongoing goal that was stopped still says Ongoing in its terms, with this
+    # as a separate fact recording when it stopped.
+    ended_on: date | None = Field(default=None)
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     )
