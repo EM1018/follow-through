@@ -7,6 +7,7 @@ import type { ApiError } from '@/api/errors';
 import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
 import { Screen } from '@/components/Screen';
+import { invalidateCommitmentsQueries } from '@/features/goals/commitments';
 import { ActivityFilterChips } from '@/features/logs/ActivityFilterChips';
 import { presentActivities, useActivities, type Activity } from '@/features/logs/activities';
 import {
@@ -102,6 +103,9 @@ export default function LogScreen() {
       if (completionIsEntryLinked(completion)) {
         invalidateAllScheduleQueries(queryClient);
       }
+      // Whatever this deleted log satisfied (entry-linked or not) may no
+      // longer be satisfied once it's gone.
+      invalidateCommitmentsQueries(queryClient);
     },
     onError: (error, completion, context) => {
       if (context?.previous) {
@@ -118,6 +122,9 @@ export default function LogScreen() {
   // doesn't save a thing and watch nothing appear.
   async function handleSaved(completion: CompletionRead) {
     setSheet(null);
+    // A new standalone log, or a changed value/unit on an edit, can change
+    // what a goal's blocks show -- the Goals tab has no other way to learn that.
+    invalidateCommitmentsQueries(queryClient);
     const base = graphWindow(today);
     const from = completion.on_date < base.from ? completion.on_date : base.from;
     const range = { from, to: base.to };

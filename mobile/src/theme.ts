@@ -69,3 +69,18 @@ export const graph = {
   cellGap: 4,
   cellRadius: 3,
 } as const;
+
+/** A goal card's big "sessions done this week" number -- larger than any existing fontSize step. */
+export const heroFontSize = 40;
+
+/** Goal-progress week circles: `normal` in an expanded card's circle row, `mini` in a collapsed row. */
+export const circleSize = {
+  normal: 20,
+  mini: 8,
+} as const;
+
+/** The active goal card's segmented weekly-progress bar. */
+export const segmentBar = {
+  height: 8,
+  gap: spacing.xs,
+} as const;

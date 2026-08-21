@@ -8,7 +8,7 @@ import { Badge } from '@/components/Badge';
 import { Card } from '@/components/Card';
 import { DayItem, type AmountControl, type CompletionControl } from '@/components/DayItem';
 import { Skeleton } from '@/components/Skeleton';
-import { formatAmount } from '@/features/logs/units';
+import { invalidateCommitmentsQueries } from '@/features/goals/commitments';
 import {
   createCompletion,
   deleteCompletion,
@@ -16,6 +16,7 @@ import {
   useCompletionsForDate,
   type CompletionRead,
 } from '@/features/logs/completions';
+import { formatAmount } from '@/features/logs/units';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import type { DaySchedule, ScheduleResponse } from './api';
@@ -187,6 +188,9 @@ export function DaySection({
       // Both doors write the same data -- the Log tab's list and graph must
       // pick up a log made from here, and lose one unlogged from here.
       invalidateCompletionsQueries(queryClient);
+      // A tick here can satisfy (or an unlog can un-satisfy) a goal -- the
+      // Goals tab has no way to know that happened unless told.
+      invalidateCommitmentsQueries(queryClient);
     },
     onError: (error, _vars, context) => {
       context?.snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));

@@ -6,6 +6,7 @@ import type { ApiError } from '@/api/errors';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { Skeleton } from '@/components/Skeleton';
+import { invalidateCommitmentsQueries } from '@/features/goals/commitments';
 import { ActivityPickerSheet } from '@/features/logs/ActivityPickerSheet';
 import { useActivities, type Activity, type ActivityInfo, type UnitInfo } from '@/features/logs/activities';
 import { AmountField } from '@/features/logs/AmountField';
@@ -83,6 +84,9 @@ export function CompletionEditSheet({
       // completions data -- a patch made here has to reach both.
       invalidateCompletionsQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ['plans', planId, 'schedule'] });
+      // Changing the value/unit here can change whether this completion still
+      // satisfies (or now satisfies) a goal.
+      invalidateCommitmentsQueries(queryClient);
       onClose();
     },
   });
