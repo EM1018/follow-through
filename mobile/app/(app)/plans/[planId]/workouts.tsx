@@ -144,10 +144,21 @@ export default function WorkoutsScreen() {
           // its own -- every layout above it is a bare Slot. That leaves this route
           // as its navigator's only history entry, so React Navigation has nothing
           // to render a back chevron for (and no swipe-back gesture either). Supply
-          // headerLeft explicitly and go through router.back() rather than relying
-          // on the default header.
+          // headerLeft explicitly.
+          //
+          // dismissTo, not back(): the Tabs navigator doesn't push a history entry
+          // when you switch tabs, so back() would walk the global history to the
+          // tabs navigator's default tab rather than wherever the user actually
+          // came from. That happens to be Schedule here too, which is exactly why
+          // this was easy to miss -- see the same fix + explanation in
+          // manage-goals/index.tsx, where the origin tab (Profile) isn't the
+          // default one and the bug was actually visible.
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
+            <TouchableOpacity
+              onPress={() => router.dismissTo('/(app)/(tabs)')}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
               <Text style={styles.backLink}>Back</Text>
             </TouchableOpacity>
           ),

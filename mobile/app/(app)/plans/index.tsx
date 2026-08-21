@@ -5,7 +5,6 @@ import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity,
 import { api } from '@/api/client';
 import { describeApiError, unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
-import { supabase } from '@/lib/supabase';
 
 type PlanRead = components['schemas']['PlanRead'];
 
@@ -73,8 +72,12 @@ export default function PlansScreen() {
             </TouchableOpacity>
           ),
           headerLeft: () => (
-            <TouchableOpacity onPress={() => supabase.auth.signOut()}>
-              <Text style={styles.headerButton}>Sign out</Text>
+            // dismissTo, not back(): see manage-goals/index.tsx and
+            // plans/[planId]/workouts.tsx for why back() would land on the
+            // Tabs navigator's default tab rather than wherever this was
+            // actually opened from.
+            <TouchableOpacity onPress={() => router.dismissTo('/(app)/(tabs)')}>
+              <Text style={styles.headerButton}>Back</Text>
             </TouchableOpacity>
           ),
         }}

@@ -30,17 +30,15 @@ import { ViewModeControl } from '@/features/schedule/ViewModeControl';
 import { useViewMode, type ViewMode } from '@/features/schedule/viewMode';
 import { WeekView } from '@/features/schedule/WeekView';
 import { parseDateOnly } from '@/lib/dates';
-import { supabase } from '@/lib/supabase';
 import { colors, fontSize, fontWeight, spacing } from '@/theme';
 
+// Sign out lives only on the Profile tab now -- see signOut.ts for why it
+// has to go through queryClient.clear(), not just supabase.auth.signOut().
 function TopBar() {
   return (
     <View style={styles.topBar}>
       <TouchableOpacity onPress={() => router.push('/(app)/plans')} accessibilityRole="button">
         <Text style={styles.topBarLink}>Manage plans</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={() => supabase.auth.signOut()} accessibilityRole="button">
-        <Text style={styles.topBarLink}>Sign out</Text>
       </TouchableOpacity>
     </View>
   );
@@ -329,7 +327,6 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,

@@ -22,6 +22,18 @@ export function createCommitment(payload: CommitmentCreate): Promise<CommitmentR
   return unwrap(api.POST('/commitments', { body: payload }));
 }
 
+export function endCommitment(id: string): Promise<CommitmentRead> {
+  return unwrap(
+    api.POST('/commitments/{commitment_id}/end', { params: { path: { commitment_id: id } } }),
+  );
+}
+
+export function deleteCommitment(id: string): Promise<void> {
+  return unwrap(
+    api.DELETE('/commitments/{commitment_id}', { params: { path: { commitment_id: id } } }),
+  );
+}
+
 export function useCommitments() {
   return useQuery<CommitmentsListResponse, ApiError>({
     queryKey: COMMITMENTS_QUERY_KEY,
