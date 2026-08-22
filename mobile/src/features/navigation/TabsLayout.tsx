@@ -1,44 +1,45 @@
 import { Tabs } from 'expo-router/js-tabs';
-import { Text, type ColorValue } from 'react-native';
 
-import { colors, fontSize } from '@/theme';
-
-const TAB_ICONS = {
-  index: '▦',
-  log: '▤',
-  goals: '◎',
-  profile: '◉',
-} as const;
-
-function TabIcon({ name, color }: { name: keyof typeof TAB_ICONS; color: ColorValue }) {
-  return <Text style={{ fontSize: fontSize.lg, color }}>{TAB_ICONS[name]}</Text>;
-}
+import { GoalsIcon, LogIcon, ProfileIcon, ScheduleIcon } from '@/components/icons';
+import { colors, tabBar } from '@/theme';
 
 export function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: tabBar.active,
+        tabBarInactiveTintColor: tabBar.inactive,
         tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
       }}
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Schedule', tabBarIcon: ({ color }) => <TabIcon name="index" color={color} /> }}
+        options={{
+          title: 'Schedule',
+          tabBarIcon: ({ color, size }) => <ScheduleIcon color={String(color)} size={size} />,
+        }}
       />
       <Tabs.Screen
         name="log"
-        options={{ title: 'Log', tabBarIcon: ({ color }) => <TabIcon name="log" color={color} /> }}
+        options={{
+          title: 'Log',
+          tabBarIcon: ({ color, size }) => <LogIcon color={String(color)} size={size} />,
+        }}
       />
       <Tabs.Screen
         name="goals"
-        options={{ title: 'Goals', tabBarIcon: ({ color }) => <TabIcon name="goals" color={color} /> }}
+        options={{
+          title: 'Goals',
+          tabBarIcon: ({ color, size }) => <GoalsIcon color={String(color)} size={size} />,
+        }}
       />
       <Tabs.Screen
         name="profile"
-        options={{ title: 'Profile', tabBarIcon: ({ color }) => <TabIcon name="profile" color={color} /> }}
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color, size }) => <ProfileIcon color={String(color)} size={size} />,
+        }}
       />
     </Tabs>
   );

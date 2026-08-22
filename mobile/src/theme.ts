@@ -16,6 +16,12 @@ export const colors = {
   overlay: 'rgba(17, 17, 20, 0.5)',
 } as const;
 
+/** Bottom tab bar icon/label tints -- same blue as the Log tab's active filter chip. */
+export const tabBar = {
+  active: colors.accent,
+  inactive: colors.textMuted,
+} as const;
+
 export const spacing = {
   xs: 4,
   sm: 8,
