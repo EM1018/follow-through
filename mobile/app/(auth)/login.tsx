@@ -1,3 +1,4 @@
+import { Link } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -42,6 +43,10 @@ export default function LoginScreen() {
       <TouchableOpacity style={styles.button} onPress={handleSignIn} disabled={isSubmitting}>
         {isSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign in</Text>}
       </TouchableOpacity>
+
+      <Link href="/(auth)/signup" style={styles.link}>
+        Don&apos;t have an account? Sign up
+      </Link>
     </View>
   );
 }
@@ -76,5 +81,10 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  link: {
+    color: '#208AEF',
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

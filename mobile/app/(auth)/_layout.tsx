@@ -3,13 +3,13 @@ import { Redirect, Slot } from 'expo-router';
 import { useSession } from '@/lib/session';
 
 export default function AuthLayout() {
-  const { session, isLoading } = useSession();
+  const { session, isLoading, suppressRedirect } = useSession();
 
   if (isLoading) {
     return null;
   }
 
-  if (session) {
+  if (session && !suppressRedirect) {
     return <Redirect href="/(app)/(tabs)" />;
   }
 
