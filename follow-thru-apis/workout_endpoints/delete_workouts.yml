@@ -5,8 +5,10 @@ info:
 
 http:
   method: DELETE
-  url: ""
-  auth: inherit
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/workouts/f6681c27-d957-4ece-b1d5-c9627fdb37a9
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

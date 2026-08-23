@@ -5,13 +5,12 @@ info:
 
 http:
   method: PATCH
-  url: http://127.0.0.1:8000/plans/79c698ee-7017-43f6-9954-9f89a885640c
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580
   body:
     type: json
     data: |-
       {
-       
-        "visible_to_friends": false
+        "ends_on": "2026-08-31"
       }
   auth:
     type: bearer

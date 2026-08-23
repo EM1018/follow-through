@@ -5,16 +5,20 @@ info:
 
 http:
   method: POST
-  url: http://127.0.0.1:8000/plans/cb00443a-7a61-4c13-a770-51805f72535d/workouts
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/workouts
   body:
     type: json
     data: |-
+      // fields for this: 
+      // name and notes
+
       {
-        "name": "bike"
+        "name": "push ups",
+        "notes": "3x8"
       }
   auth:
     type: bearer
-    token: "{{token_test2_user}}"
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

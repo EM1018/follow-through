@@ -5,8 +5,44 @@ info:
 
 http:
   method: POST
-  url: ""
-  auth: inherit
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/schedule-entries
+  body:
+    type: json
+    data: |-
+      /*
+        Fields exposed: 
+          workout_id 
+          day_of_week 
+          on_date 
+          replaces_entry_id
+          name_override 
+          starts_on 
+          ends_on
+          
+          in the ui:
+          * selecting "daily" would be M-Su
+            -> day of week would be all, this would be 7 requests
+          * selecting "weekly" would be once a week
+            -> day of week would be the one selected (M, T, W, ...), this would be a single request (recurring, but no end date or start date specified)
+          * selecting custom allows: 
+            -> picking custom days and deciding when 
+            it starts and ends 
+          note: starts on/ends on can only accompany day of week, and exactly one of day_of_week or on_date
+          is always on, only one, not both
+      */
+
+      {
+      // recurring pushups
+        "workout_id": "14b4f0f3-eed5-498a-92b0-4f01bfe27dc8",
+      // say in the ui we select days:
+      // issue here is only being able to put 1 day
+        "day_of_week": 7,
+        "starts_on": "2026-08-11", 
+        "ends_on": "2026-08-31"
+      }
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

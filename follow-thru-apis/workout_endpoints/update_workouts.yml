@@ -5,17 +5,16 @@ info:
 
 http:
   method: PATCH
-  url: http://127.0.0.1:8000/plans/cb00443a-7a61-4c13-a770-51805f72535d/workouts/ec004a79-139b-4354-bc27-936b55b9b404
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/workouts/36600d87-171c-489e-b213-d4f6f3f2b548
   body:
     type: json
     data: |-
       {
-        "name": "bike",
-        "notes": "at least 10 minutes"
+        "name": "curls"
       }
   auth:
     type: bearer
-    token: "{{token_test2_user}}"
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

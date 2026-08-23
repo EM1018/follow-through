@@ -5,7 +5,7 @@ info:
 
 http:
   method: DELETE
-  url: http://127.0.0.1:8000/plans/d9fbadaf-c4b2-4db3-ba6d-b4807092b7e1
+  url: http://127.0.0.1:8000/plans/674c009a-93bf-46c8-b314-5cc1621fd4d8
   auth:
     type: bearer
     token: "{{token_test1_user}}"

@@ -5,8 +5,17 @@ info:
 
 http:
   method: GET
-  url: http://127.0.0.1:8000/plans/ed607a1e-b959-4bd7-a6d3-aa5bbf30e1ab/schedule-entries
-  auth: inherit
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/schedule?from=2026-08-14&to=2026-08-31
+  params:
+    - name: from
+      value: 2026-08-14
+      type: query
+    - name: to
+      value: 2026-08-31
+      type: query
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

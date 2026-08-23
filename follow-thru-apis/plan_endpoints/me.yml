@@ -5,8 +5,10 @@ info:
 
 http:
   method: GET
-  url: ""
-  auth: inherit
+  url: http://127.0.0.1:8000/me
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

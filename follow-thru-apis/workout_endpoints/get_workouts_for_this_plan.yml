@@ -5,10 +5,10 @@ info:
 
 http:
   method: GET
-  url: http://127.0.0.1:8000/plans/{plan-id}/workouts
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/workouts
   auth:
     type: bearer
-    token: "{{token_test2_user}}"
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

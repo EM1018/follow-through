@@ -5,8 +5,22 @@ info:
 
 http:
   method: PATCH
-  url: ""
-  auth: inherit
+  url: http://127.0.0.1:8000/plans/b66fb94d-c346-4e31-a305-6f2d6464d580/schedule-entries/c8da905d-848d-4669-b3ef-bae9f8045b51
+  body:
+    type: json
+    data: |-
+      /*
+        Actually changing the recurring entry itself — e.g. permanently moving it from Monday to Wednesday, forever. That's PATCH /schedule-entries/{recurring_entry_id}, and it's a real edit to the standing rule.
+        
+      Editing the replacement/cancellation entry you just created — e.g. you cancelled Aug 24, then change your mind about the date: PATCH /schedule-entries/{cancellation_id} with {"on_date": "2026-08-31"}. You're editing that row, which still exists as its own independent entry — you're just not editing the thing it points at.
+
+      */
+      {
+        "on_date": "2026-08-12"
+      }
+  auth:
+    type: bearer
+    token: "{{token_test1_user}}"
 
 settings:
   encodeUrl: true

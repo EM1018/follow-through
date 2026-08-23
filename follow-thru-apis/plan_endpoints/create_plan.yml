@@ -10,8 +10,10 @@ http:
     type: json
     data: |-
       {
-        "name":"cardio", 
-        "starts_on":"2026-08-06"
+        "name": "PPL",
+        "starts_on": "2026-08-11",
+        "ends_on": null,
+        "visible_to_friends": false
       }
   auth:
     type: bearer
