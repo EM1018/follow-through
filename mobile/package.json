@@ -46,6 +46,7 @@
     "jest": "^29.7.0",
     "jest-expo": "^57.0.4",
     "openapi-typescript": "^7.13.0",
+    "patch-package": "^8.0.1",
     "react-test-renderer": "19.2.3",
     "typescript": "~6.0.3"
   },
@@ -57,7 +58,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test": "jest",
-    "gen:api": "openapi-typescript ../contract/openapi.json -o src/api/schema.d.ts"
+    "gen:api": "openapi-typescript ../contract/openapi.json -o src/api/schema.d.ts",
+    "postinstall": "patch-package"
   },
   "jest": {
     "preset": "jest-expo"
