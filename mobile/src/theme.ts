@@ -79,6 +79,12 @@ export const graph = {
 /** A goal card's big "sessions done this week" number -- larger than any existing fontSize step. */
 export const heroFontSize = 40;
 
+/** Schedule header's plan switcher dropdown -- row height and how many rows show before it scrolls. */
+export const planSwitcher = {
+  rowHeight: 48,
+  maxVisibleRows: 5,
+} as const;
+
 /** Goal-progress week circles: `normal` in an expanded card's circle row, `mini` in a collapsed row. */
 export const circleSize = {
   normal: 20,

@@ -2,31 +2,23 @@ import { useQuery } from '@tanstack/react-query';
 import { startOfToday } from 'date-fns';
 import { router } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, type LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { api } from '@/api/client';
 import { unwrap, type ApiError } from '@/api/errors';
-import { Badge } from '@/components/Badge';
-import { Card } from '@/components/Card';
-import { PageDots } from '@/components/PageDots';
+import { Button } from '@/components/Button';
+import { EmptyState } from '@/components/EmptyState';
 import { Screen } from '@/components/Screen';
-import { buildPlanStack, type PlanRead, type PlanStackItem } from '@/features/home/planStack';
+import { PlanHeader, ScheduleHeaderFallback } from '@/features/home/PlanHeader';
+import { isPlanListEmpty, selectOrderedPlans, type PlanRead } from '@/features/home/planStack';
+import { PlanSwitcherDropdown } from '@/features/home/PlanSwitcherDropdown';
+import { useScheduleSelection } from '@/features/home/useScheduleSelection';
 import { AddWorkoutModal } from '@/features/schedule/AddWorkoutModal';
 import { DayView } from '@/features/schedule/DayView';
 import { EntryActionsSheet, type EntryTarget } from '@/features/schedule/EntryActionsSheet';
 import { MonthView } from '@/features/schedule/MonthView';
+import { CREATE_PLAN_BUTTON_LABEL, EMPTY_SCHEDULE_SUBTITLE, EMPTY_SCHEDULE_TITLE } from '@/features/schedule/scheduleCopy';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
-import { ViewModeControl } from '@/features/schedule/ViewModeControl';
 import { useViewMode, type ViewMode } from '@/features/schedule/viewMode';
 import { WeekView } from '@/features/schedule/WeekView';
 import { parseDateOnly } from '@/lib/dates';
@@ -44,23 +36,6 @@ function TopBar() {
   );
 }
 
-function CreatePlanCard() {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => router.push('/(app)/plans/new')}
-      accessibilityRole="button"
-      accessibilityLabel="Create plan or split"
-      style={styles.createTouchable}
-    >
-      <Card style={styles.createCard}>
-        <Text style={styles.createIcon}>⊕</Text>
-        <Text style={styles.createLabel}>create plan/split</Text>
-      </Card>
-    </TouchableOpacity>
-  );
-}
-
 function CalendarArea({
   planId,
   planStartsOn,
@@ -68,6 +43,8 @@ function CalendarArea({
   today,
   viewMode,
   onViewModeChange,
+  focusedDate,
+  onFocusedDateChange,
 }: {
   planId: string;
   planStartsOn: Date;
@@ -75,9 +52,10 @@ function CalendarArea({
   today: Date;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  focusedDate: Date;
+  onFocusedDateChange: (date: Date) => void;
 }) {
   const [width, setWidth] = useState(0);
-  const [focusedDate, setFocusedDate] = useState(today);
   const [addModalDate, setAddModalDate] = useState<Date | null>(null);
   const [entryAction, setEntryAction] = useState<{ target: EntryTarget; date: Date } | null>(null);
 
@@ -93,10 +71,10 @@ function CalendarArea({
 
   const onSelectDateFromMonth = useCallback(
     (date: Date) => {
-      setFocusedDate(date);
+      onFocusedDateChange(date);
       onViewModeChange('day');
     },
-    [onViewModeChange],
+    [onFocusedDateChange, onViewModeChange],
   );
 
   const closeAddModal = useCallback(() => setAddModalDate(null), []);
@@ -114,7 +92,7 @@ function CalendarArea({
           planId={planId}
           today={today}
           focusedDate={focusedDate}
-          onFocusedDateChange={setFocusedDate}
+          onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={setAddModalDate}
@@ -127,7 +105,7 @@ function CalendarArea({
           planId={planId}
           today={today}
           focusedDate={focusedDate}
-          onFocusedDateChange={setFocusedDate}
+          onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={setAddModalDate}
@@ -170,34 +148,21 @@ function PlanPage({
   today,
   viewMode,
   onViewModeChange,
+  focusedDate,
+  onFocusedDateChange,
 }: {
   plan: PlanRead;
   today: Date;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  focusedDate: Date;
+  onFocusedDateChange: (date: Date) => void;
 }) {
   const planStartsOn = useMemo(() => parseDateOnly(plan.starts_on), [plan.starts_on]);
   const planEndsOn = useMemo(() => (plan.ends_on ? parseDateOnly(plan.ends_on) : null), [plan.ends_on]);
 
   return (
     <View style={styles.page}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.planName} numberOfLines={1}>
-            {plan.name}
-          </Text>
-          {plan.is_active ? <Badge label="Active" variant="success" /> : null}
-        </View>
-        <TouchableOpacity
-          onPress={() => router.push(`/(app)/plans/${plan.id}/workouts`)}
-          accessibilityRole="button"
-          accessibilityLabel="Manage workouts"
-        >
-          <Text style={styles.workoutsLink}>Workouts</Text>
-        </TouchableOpacity>
-        <ViewModeControl value={viewMode} onChange={onViewModeChange} />
-      </View>
-
       <CalendarArea
         planId={plan.id}
         planStartsOn={planStartsOn}
@@ -205,22 +170,14 @@ function PlanPage({
         today={today}
         viewMode={viewMode}
         onViewModeChange={onViewModeChange}
+        focusedDate={focusedDate}
+        onFocusedDateChange={onFocusedDateChange}
       />
     </View>
   );
 }
 
-function CreatePage() {
-  return (
-    <View style={styles.createPage}>
-      <CreatePlanCard />
-    </View>
-  );
-}
-
 export default function HomeScreen() {
-  const [pageHeight, setPageHeight] = useState(0);
-  const [activeIndex, setActiveIndex] = useState(0);
   const { viewMode, setViewMode } = useViewMode();
 
   const plansQuery = useQuery<PlanRead[], ApiError>({
@@ -229,58 +186,33 @@ export default function HomeScreen() {
   });
 
   const today = useMemo(() => startOfToday(), []);
-  const stack = useMemo(
-    () => (plansQuery.data ? buildPlanStack(plansQuery.data, today) : []),
+  const orderedPlans = useMemo(
+    () => (plansQuery.data ? selectOrderedPlans(plansQuery.data, today) : []),
     [plansQuery.data, today],
   );
-  const isEmpty = stack.length <= 1;
 
-  const onContainerLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const { height } = event.nativeEvent.layout;
-      if (height > 0 && height !== pageHeight) {
-        setPageHeight(height);
-      }
-    },
-    [pageHeight],
-  );
+  const { currentPlan, selectPlan, focusedDate, setFocusedDate } = useScheduleSelection(orderedPlans, today);
+  const isEmpty = isPlanListEmpty(plansQuery.data, orderedPlans);
 
-  const onMomentumScrollEnd = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (!pageHeight) {
-        return;
-      }
-      setActiveIndex(Math.round(event.nativeEvent.contentOffset.y / pageHeight));
-    },
-    [pageHeight],
-  );
-
-  const getItemLayout = useCallback(
-    (_data: ArrayLike<PlanStackItem> | null | undefined, index: number) => ({
-      length: pageHeight,
-      offset: pageHeight * index,
-      index,
-    }),
-    [pageHeight],
-  );
-
-  const renderItem = useCallback(
-    ({ item }: { item: PlanStackItem }) => (
-      <View style={{ height: pageHeight }}>
-        {item.kind === 'plan' ? (
-          <PlanPage plan={item.plan} today={today} viewMode={viewMode} onViewModeChange={setViewMode} />
-        ) : (
-          <CreatePage />
-        )}
-      </View>
-    ),
-    [pageHeight, today, viewMode, setViewMode],
-  );
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [headerBottom, setHeaderBottom] = useState(0);
 
   return (
     <Screen style={styles.screen}>
       <TopBar />
-      <View style={styles.container} onLayout={onContainerLayout}>
+      {currentPlan ? (
+        <PlanHeader
+          plan={currentPlan}
+          open={dropdownOpen}
+          onToggle={() => setDropdownOpen((open) => !open)}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          onLayoutBottom={setHeaderBottom}
+        />
+      ) : isEmpty ? (
+        <ScheduleHeaderFallback />
+      ) : null}
+      <View style={styles.container}>
         {/* Loading/error only cover the whole screen on a genuinely empty cache --
             once plan data has ever loaded, it stays on screen (stale-while-error)
             rather than getting replaced by a background refetch failure. */}
@@ -294,28 +226,39 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {plansQuery.data && isEmpty ? (
+        {isEmpty ? (
           <View style={styles.centered}>
-            <CreatePlanCard />
+            <EmptyState
+              title={EMPTY_SCHEDULE_TITLE}
+              subtitle={EMPTY_SCHEDULE_SUBTITLE}
+              action={<Button label={CREATE_PLAN_BUTTON_LABEL} onPress={() => router.push('/(app)/plans')} />}
+            />
           </View>
         ) : null}
 
-        {plansQuery.data && !isEmpty && pageHeight > 0 ? (
-          <>
-            <FlatList
-              data={stack}
-              keyExtractor={(item) => (item.kind === 'plan' ? item.plan.id : 'create')}
-              renderItem={renderItem}
-              pagingEnabled
-              showsVerticalScrollIndicator={false}
-              getItemLayout={getItemLayout}
-              initialScrollIndex={0}
-              onMomentumScrollEnd={onMomentumScrollEnd}
-            />
-            <PageDots count={stack.length} activeIndex={activeIndex} />
-          </>
+        {currentPlan ? (
+          <PlanPage
+            plan={currentPlan}
+            today={today}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            focusedDate={focusedDate}
+            onFocusedDateChange={setFocusedDate}
+          />
         ) : null}
       </View>
+      {dropdownOpen && currentPlan ? (
+        <PlanSwitcherDropdown
+          plans={orderedPlans}
+          currentPlanId={currentPlan.id}
+          top={headerBottom}
+          onSelect={(planId) => {
+            selectPlan(planId);
+            setDropdownOpen(false);
+          }}
+          onClose={() => setDropdownOpen(false)}
+        />
+      ) : null}
     </Screen>
   );
 }
@@ -351,58 +294,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.lg,
-    gap: spacing.lg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    zIndex: 10,
-  },
-  headerLeft: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  planName: {
-    flexShrink: 1,
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-    color: colors.text,
-  },
-  workoutsLink: {
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-    color: colors.accent,
   },
   calendarArea: {
     flex: 1,
-  },
-  createPage: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  createTouchable: {
-    width: '100%',
-  },
-  createCard: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.xl,
-  },
-  createIcon: {
-    fontSize: fontSize.xl,
-    color: colors.accent,
-  },
-  createLabel: {
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
-    color: colors.text,
   },
 });
