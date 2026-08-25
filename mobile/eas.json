@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://127.0.0.1:8000",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://lycldvdeeftxklvnzkhm.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_sQ5HsA2eO6Xc0BSXa7tBFw_1i1yG7Xs"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://follow-through-production.up.railway.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://lycldvdeeftxklvnzkhm.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_sQ5HsA2eO6Xc0BSXa7tBFw_1i1yG7Xs"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://follow-through-production.up.railway.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://lycldvdeeftxklvnzkhm.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_sQ5HsA2eO6Xc0BSXa7tBFw_1i1yG7Xs"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
