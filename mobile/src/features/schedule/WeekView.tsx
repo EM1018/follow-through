@@ -171,6 +171,7 @@ export function WeekView({
 
   return (
     <FlatList
+      style={styles.pager}
       data={WEEK_OFFSETS}
       keyExtractor={(offset) => String(offset)}
       renderItem={renderItem}
@@ -186,6 +187,12 @@ export function WeekView({
 }
 
 const styles = StyleSheet.create({
+  // See the matching note in DayView -- without this the FlatList has no
+  // defined height, so weekPage/DaySection's flex:1 below it has nothing to
+  // fill.
+  pager: {
+    flex: 1,
+  },
   weekPage: {
     flex: 1,
     gap: spacing.md,

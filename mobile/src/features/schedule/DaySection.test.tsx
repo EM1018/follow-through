@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Alert, Text, TouchableOpacity } from 'react-native';
+import { Alert, ScrollView, Text, TouchableOpacity } from 'react-native';
 import renderer, { act, type ReactTestRenderer, type ReactTestInstance } from 'react-test-renderer';
 
 import { api } from '@/api/client';
+import { spacing } from '@/theme';
 
 import type { DaySchedule, EntryRef, ResolvedEntry } from './api';
 import { DaySection } from './DaySection';
@@ -93,6 +94,10 @@ function normalize(node: unknown): unknown {
     );
   }
   return node;
+}
+
+function flatten(style: unknown): Record<string, unknown> {
+  return Object.assign({}, ...(Array.isArray(style) ? style : [style]).filter(Boolean));
 }
 
 const planId = 'plan-1';
@@ -386,5 +391,77 @@ describe('DaySection tap to log/unlog', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['completions'] });
+  });
+});
+
+function manyEntries(count: number): ResolvedEntry[] {
+  return Array.from({ length: count }, (_, i) => ({
+    ...scheduledEntry,
+    entry_id: `entry-${i}`,
+    name: `Workout ${i}`,
+  }));
+}
+
+describe('DaySection scrolling', () => {
+  it('renders the entry list inside a scrollable container when the day has many entries', () => {
+    const day: DaySchedule = { status: 'scheduled', entries: manyEntries(10), cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day })} />);
+
+    expect(root.findAllByType(ScrollView).length).toBeGreaterThan(0);
+  });
+
+  it("sizes the scroll content's bottom padding to clear the add button, via contentContainerStyle", () => {
+    const day: DaySchedule = { status: 'scheduled', entries: manyEntries(10), cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day })} />);
+
+    const scrollView = root.findByType(ScrollView);
+    // Not a margin on the last row -- this must live on the scroll content
+    // itself, or the last workout permanently sits under the floating ⊕.
+    const contentStyle = flatten(scrollView.props.contentContainerStyle);
+    expect(contentStyle.paddingBottom).toBe(spacing.xl * 2);
+  });
+
+  it('renders the empty state without a scrolling container', () => {
+    const day: DaySchedule = { status: 'empty', entries: [], cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day })} />);
+
+    expect(root.findAllByType(ScrollView)).toHaveLength(0);
+  });
+
+  it('renders an out-of-plan state without a scrolling container', () => {
+    const root = renderWithClient(<DaySection {...baseProps({ date: new Date(2020, 0, 1) })} />);
+
+    expect(root.findAllByType(ScrollView)).toHaveLength(0);
+  });
+
+  it('renders the add button for an in-plan day', () => {
+    const day: DaySchedule = { status: 'scheduled', entries: manyEntries(3), cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day })} />);
+
+    expect(root.findAllByType(TouchableOpacity).some((n) => n.props.accessibilityLabel === 'Add workout')).toBe(true);
+  });
+
+  it('hides the add button for an out-of-plan day', () => {
+    const root = renderWithClient(<DaySection {...baseProps({ date: new Date(2020, 0, 1) })} />);
+
+    expect(root.findAllByType(TouchableOpacity).some((n) => n.props.accessibilityLabel === 'Add workout')).toBe(
+      false,
+    );
+  });
+
+  it('does not disable scrolling for a day short enough to fit on screen', () => {
+    const shortDay: DaySchedule = { status: 'scheduled', entries: manyEntries(1), cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day: shortDay })} />);
+
+    // scrollEnabled is either left at its default (undefined, i.e. true) or
+    // explicitly true -- never false, and never conditional on content size.
+    expect(root.findByType(ScrollView).props.scrollEnabled).not.toBe(false);
+  });
+
+  it('does not disable scrolling for a day with many entries either', () => {
+    const longDay: DaySchedule = { status: 'scheduled', entries: manyEntries(20), cancelled: [], completed: false };
+    const root = renderWithClient(<DaySection {...baseProps({ day: longDay })} />);
+
+    expect(root.findByType(ScrollView).props.scrollEnabled).not.toBe(false);
   });
 });

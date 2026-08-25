@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, isFuture, isToday } from 'date-fns';
 import { useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ApiError } from '@/api/errors';
 import { Badge } from '@/components/Badge';
@@ -80,7 +80,7 @@ function DayContent({
   }
 
   return (
-    <View style={styles.entryList}>
+    <ScrollView contentContainerStyle={styles.scrollContent}>
       {day.entries.map((entry) => {
         const name = entry.name ?? 'Untitled';
         // Cancelled entries never reach here (they're rendered below, from
@@ -108,7 +108,7 @@ function DayContent({
           onPress={() => onEntryPress({ kind: 'cancelled', target })}
         />
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -310,10 +310,6 @@ const styles = StyleSheet.create({
   },
   dayCard: {
     flex: 1,
-    // Rows anchor from the top (see entryList); this bottom padding is what
-    // keeps the last one from sitting under the FAB, which floats past the
-    // card's own edge.
-    paddingBottom: spacing.xl * 2,
   },
   addButton: {
     position: 'absolute',
@@ -354,6 +350,14 @@ const styles = StyleSheet.create({
   },
   entryList: {
     gap: spacing.sm,
+  },
+  // On contentContainerStyle, not dayCard: putting it on the card would inset
+  // the scroll viewport itself and leave dead space at the bottom even when
+  // there's nothing to scroll. Rows anchor from the top, so this is what
+  // keeps the last one clear of the FAB, which floats past the card's edge.
+  scrollContent: {
+    gap: spacing.sm,
+    paddingBottom: spacing.xl * 2,
   },
   skeletonLineWide: {
     alignSelf: 'center',

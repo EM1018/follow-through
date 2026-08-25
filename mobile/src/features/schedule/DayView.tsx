@@ -4,6 +4,7 @@ import {
   FlatList,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  StyleSheet,
   View,
 } from 'react-native';
 
@@ -125,6 +126,7 @@ export function DayView({
 
   return (
     <FlatList
+      style={styles.pager}
       data={offsets}
       keyExtractor={(offset) => String(offset)}
       renderItem={renderItem}
@@ -138,3 +140,14 @@ export function DayView({
     />
   );
 }
+
+const styles = StyleSheet.create({
+  // Without this, the FlatList has no defined height for its own layout, so
+  // it (and everything flex:1 below it -- DaySection's card included) shrinks
+  // to content instead of filling CalendarArea. Cross-axis (height) stretch
+  // for each paged item then falls out of the default flex behavior once
+  // the FlatList itself has a real size to stretch into.
+  pager: {
+    flex: 1,
+  },
+});
