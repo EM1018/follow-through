@@ -6,6 +6,7 @@ import { updateMeWithToken, type MeUpdate } from '@/features/profile/me';
 import { isValidUsernameFormat, lowercaseUsername } from '@/features/profile/username';
 import { supabase } from '@/lib/supabase';
 import { useSession } from '@/lib/session';
+import { colors } from '@/theme';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 6;
@@ -162,6 +163,8 @@ export default function SignUpScreen() {
         <TextInput
           style={styles.input}
           placeholder="Email"
+          placeholderTextColor={colors.textMuted}
+          keyboardAppearance="light"
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="email-address"
@@ -177,6 +180,8 @@ export default function SignUpScreen() {
           <TextInput
             style={[styles.input, styles.passwordInput]}
             placeholder="Password"
+            placeholderTextColor={colors.textMuted}
+            keyboardAppearance="light"
             secureTextEntry={!showPassword}
             value={password}
             onChangeText={setPassword}
@@ -193,6 +198,8 @@ export default function SignUpScreen() {
         <TextInput
           style={styles.input}
           placeholder="Username"
+          placeholderTextColor={colors.textMuted}
+          keyboardAppearance="light"
           autoCapitalize="none"
           autoCorrect={false}
           value={username}
@@ -224,6 +231,7 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background,
     justifyContent: 'center',
     padding: 24,
     gap: 12,
@@ -241,6 +249,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 8,
     padding: 12,
+    color: colors.text,
   },
   passwordRow: {
     flexDirection: 'row',

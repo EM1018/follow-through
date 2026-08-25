@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity,
 import { api } from '@/api/client';
 import { describeApiError, unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
+import { colors } from '@/theme';
 
 type PlanRead = components['schemas']['PlanRead'];
 
@@ -130,6 +131,7 @@ export default function PlansScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background,
   },
   centered: {
     flex: 1,

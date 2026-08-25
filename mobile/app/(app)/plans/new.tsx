@@ -14,6 +14,7 @@ import {
 import { api } from '@/api/client';
 import { describeApiError, unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
+import { colors } from '@/theme';
 
 function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
@@ -64,13 +65,34 @@ export default function NewPlanScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.label}>Name</Text>
-      <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="e.g. PPL" />
+      <TextInput
+        style={styles.input}
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g. PPL"
+        placeholderTextColor={colors.textMuted}
+        keyboardAppearance="light"
+      />
 
       <Text style={styles.label}>Starts on (YYYY-MM-DD)</Text>
-      <TextInput style={styles.input} value={startsOn} onChangeText={setStartsOn} placeholder={todayUtc()} />
+      <TextInput
+        style={styles.input}
+        value={startsOn}
+        onChangeText={setStartsOn}
+        placeholder={todayUtc()}
+        placeholderTextColor={colors.textMuted}
+        keyboardAppearance="light"
+      />
 
       <Text style={styles.label}>Ends on (YYYY-MM-DD, optional)</Text>
-      <TextInput style={styles.input} value={endsOn} onChangeText={setEndsOn} placeholder="leave blank" />
+      <TextInput
+        style={styles.input}
+        value={endsOn}
+        onChangeText={setEndsOn}
+        placeholder="leave blank"
+        placeholderTextColor={colors.textMuted}
+        keyboardAppearance="light"
+      />
 
       <View style={styles.switchRow}>
         <Text style={styles.label}>Active</Text>
@@ -98,6 +120,7 @@ export default function NewPlanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background,
     padding: 24,
     gap: 8,
   },
@@ -111,6 +134,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 8,
     padding: 12,
+    color: colors.text,
   },
   switchRow: {
     flexDirection: 'row',
