@@ -74,7 +74,20 @@ def _matches(entry: ScheduleEntry, on: date) -> bool:
     )
 
 
-def _is_cancellation(entry: ScheduleEntry) -> bool:
+# Public (not module-private) because app/routers/schedule_entries.py also
+# needs this exact test, to know which existing row a new POST supersedes.
+# This null-test is re-expressed in SQL by two partial unique indexes on
+# schedule_entries - uq_schedule_entries_one_cancellation_per_day and
+# uq_schedule_entries_one_replacement_per_day (see the model's
+# __table_args__ and migration 964556b89ff0) - which is how "one live
+# cancellation per root per date" and "one live replacement per root per
+# date" get enforced as two separate invariants instead of one. If a field
+# like notes_override is ever added here, the index predicates must be
+# revisited deliberately alongside this function, not left to drift: a row
+# with only replaces_entry_id + notes_override would classify as a
+# cancellation under both today's definition and the indexes as written,
+# and that may not be what's wanted once notes_override exists.
+def is_cancellation(entry: ScheduleEntry) -> bool:
     return (
         entry.replaces_entry_id is not None
         and entry.workout_id is None
@@ -109,7 +122,7 @@ def resolve(
         (
             entry
             for entry in matched
-            if entry.id not in suppressed_ids and not _is_cancellation(entry)
+            if entry.id not in suppressed_ids and not is_cancellation(entry)
         ),
         key=lambda entry: entry.created_at,
     )
@@ -152,7 +165,7 @@ def resolve(
     cancelled = [
         matched_by_id[entry.replaces_entry_id]
         for entry in matched
-        if _is_cancellation(entry) and entry.replaces_entry_id in matched_by_id
+        if is_cancellation(entry) and entry.replaces_entry_id in matched_by_id
     ]
 
     if any(resolved.status is EntryStatus.SUBSTITUTED for resolved in resolved_entries):

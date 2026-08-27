@@ -1773,3 +1773,218 @@ async def test_pre_existing_out_of_window_entry_resolves_empty_not_erroring(
     day = response.json()["days"]["2026-08-10"]
     assert day["status"] == "empty"
     assert day["entries"] == []
+
+
+# G. one live replacement per kind per day (prompt 28)
+
+
+@pytest.mark.asyncio
+async def test_cancel_swap_cancel_leaves_one_cancellation_no_replacement(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: Any,
+) -> None:
+    """The prompt 28 repro: create -> cancel -> swap -> cancel. Steps 1-3 are
+    plain POSTs; step 4 ("cancel bench") is exercised the way the fixed
+    cancelSubstitutedMutation now does it (EntryActionsSheet.tsx) - since a
+    cancellation already exists for this root+date after step 2, cancelling
+    the substitution is Undo Swap: DELETE the swap and post nothing. Before
+    this fix, that mutation always deleted the swap AND posted a second,
+    redundant cancellation, leaving two live cancellation rows targeting the
+    root on the same date.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    shoulder_press = await make_workout(client, plan["id"], name="Shoulder Press")
+    bench = await make_workout(client, plan["id"], name="Bench")
+    root = await make_entry(client, plan["id"], workout_id=shoulder_press["id"], day_of_week=1)
+    on_date = _next_monday_on_or_after(plan["starts_on"])
+
+    cancel_1 = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": on_date, "replaces_entry_id": root["id"]},
+    )
+    assert cancel_1.status_code == 201, cancel_1.text
+
+    swap = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": on_date, "replaces_entry_id": root["id"], "workout_id": bench["id"]},
+    )
+    assert swap.status_code == 201, swap.text
+
+    undo_swap = await client.delete(
+        f"/plans/{plan['id']}/schedule-entries/{swap.json()['id']}"
+    )
+    assert undo_swap.status_code == 204
+
+    result = await session.exec(
+        select(ScheduleEntry).where(ScheduleEntry.replaces_entry_id == uuid.UUID(root["id"]))
+    )
+    rows = list(result)
+    assert [str(row.id) for row in rows] == [cancel_1.json()["id"]]
+
+    schedule = await client.get(
+        f"/plans/{plan['id']}/schedule", params={"from": on_date, "to": on_date}
+    )
+    assert schedule.json()["days"][on_date]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_replacement_pointing_at_a_replacement_stores_the_root_id(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+) -> None:
+    """Posting a replacement whose replaces_entry_id points at an existing
+    replacement (not a root) must resolve to the ROOT before storing -
+    chains stay flat regardless of what id the caller sends.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    original = await make_workout(client, plan["id"], name="Push")
+    first_sub = await make_workout(client, plan["id"], name="Yoga")
+    second_sub = await make_workout(client, plan["id"], name="Row")
+    root = await make_entry(client, plan["id"], workout_id=original["id"], day_of_week=1)
+    monday_1 = _next_monday_on_or_after(plan["starts_on"])
+    monday_2 = _days_after(monday_1, 7)
+
+    first_replacement = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": monday_1, "replaces_entry_id": root["id"], "workout_id": first_sub["id"]},
+    )
+    assert first_replacement.status_code == 201, first_replacement.text
+
+    second_replacement = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={
+            "on_date": monday_2,
+            "replaces_entry_id": first_replacement.json()["id"],
+            "workout_id": second_sub["id"],
+        },
+    )
+    assert second_replacement.status_code == 201, second_replacement.text
+    assert second_replacement.json()["replaces_entry_id"] == root["id"]
+
+
+@pytest.mark.asyncio
+async def test_second_cancellation_for_same_root_and_date_supersedes_the_first(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    root = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
+    on_date = _next_monday_on_or_after(plan["starts_on"])
+
+    first_cancellation = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": on_date, "replaces_entry_id": root["id"]},
+    )
+    assert first_cancellation.status_code == 201, first_cancellation.text
+
+    second_cancellation = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": on_date, "replaces_entry_id": root["id"]},
+    )
+    assert second_cancellation.status_code == 201, second_cancellation.text
+
+    result = await session.exec(
+        select(ScheduleEntry).where(ScheduleEntry.replaces_entry_id == uuid.UUID(root["id"]))
+    )
+    rows = list(result)
+    assert [str(row.id) for row in rows] == [second_cancellation.json()["id"]]
+
+
+@pytest.mark.asyncio
+async def test_completion_on_superseded_replacement_is_409_and_nothing_changes(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: Any,
+) -> None:
+    """A logged session on the row about to be deleted must block the swap
+    with a 409 rather than being silently detached via ON DELETE SET NULL -
+    nothing gets deleted, nothing gets inserted.
+    """
+    client, _user = authed_client
+    plan = await make_plan(client)
+    original = await make_workout(client, plan["id"], name="Push")
+    substitute = await make_workout(client, plan["id"], name="Yoga")
+    another_substitute = await make_workout(client, plan["id"], name="Row")
+    root = await make_entry(client, plan["id"], workout_id=original["id"], day_of_week=1)
+    # Completions reject a future on_date, so this uses plan["starts_on"]
+    # (today) directly rather than _next_monday_on_or_after - matching
+    # test_replacing_an_already_completed_date_is_409's pattern, since the
+    # completion guard cares about on_date matching, not real weekday
+    # alignment.
+    on_date = plan["starts_on"]
+
+    replacement = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": on_date, "replaces_entry_id": root["id"], "workout_id": substitute["id"]},
+    )
+    assert replacement.status_code == 201, replacement.text
+    replacement_id = replacement.json()["id"]
+
+    completed = await client.post(
+        "/completions", json={"schedule_entry_id": replacement_id, "on_date": on_date}
+    )
+    assert completed.status_code == 201, completed.text
+
+    conflicting_swap = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={
+            "on_date": on_date,
+            "replaces_entry_id": root["id"],
+            "workout_id": another_substitute["id"],
+        },
+    )
+    assert conflicting_swap.status_code == 409
+
+    result = await session.exec(
+        select(ScheduleEntry).where(ScheduleEntry.replaces_entry_id == uuid.UUID(root["id"]))
+    )
+    rows = list(result)
+    assert [str(row.id) for row in rows] == [replacement_id]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_same_root_on_two_different_dates_succeeds(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    make_plan: Any,
+    make_workout: Any,
+    make_entry: Any,
+    session: Any,
+) -> None:
+    client, _user = authed_client
+    plan = await make_plan(client)
+    workout = await make_workout(client, plan["id"])
+    root = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
+    monday_1 = _next_monday_on_or_after(plan["starts_on"])
+    monday_2 = _days_after(monday_1, 7)
+
+    first = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": monday_1, "replaces_entry_id": root["id"]},
+    )
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        f"/plans/{plan['id']}/schedule-entries",
+        json={"on_date": monday_2, "replaces_entry_id": root["id"]},
+    )
+    assert second.status_code == 201, second.text
+
+    result = await session.exec(
+        select(ScheduleEntry).where(ScheduleEntry.replaces_entry_id == uuid.UUID(root["id"]))
+    )
+    rows = {str(row.id) for row in result}
+    assert rows == {first.json()["id"], second.json()["id"]}

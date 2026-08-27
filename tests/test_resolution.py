@@ -533,6 +533,29 @@ def test_mixed_day_one_scheduled_one_substituted_reports_substituted() -> None:
     assert survivors[substitution.id].replaced == substituted_target
 
 
+def test_cancellation_and_replacement_of_the_same_root_coexist() -> None:
+    """Regression guard for prompt 28: swapping over a cancelled day leaves
+    the old cancellation in place on purpose (see swapMutation's comment in
+    EntryActionsSheet.tsx), so a root can legitimately have both a
+    cancellation row and a replacement row pointing at it on the same date.
+    This is the exact pairing the first draft of prompt 28's migration would
+    have deduped away as a "duplicate" - it isn't one. The replacement must
+    win the entries list while the cancellation still reports the root via
+    `cancelled`, which is what lets Undo Swap reveal the cancellation instead
+    of reverting straight to scheduled.
+    """
+    root = _recurring_entry(W1, MON)
+    cancellation = _cancellation(date(2026, 8, 10), root.id)
+    replacement = _dated_entry(W2, date(2026, 8, 10), replaces_entry_id=root.id)
+
+    day = resolve([root, cancellation, replacement], date(2026, 8, 10))
+
+    assert day.status == DayStatus.SUBSTITUTED
+    assert _survivors(day) == [replacement]
+    assert day.entries[0].replaced == root
+    assert day.cancelled == [root]
+
+
 # PROMPT 10: date_within_plan_window
 
 

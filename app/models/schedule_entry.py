@@ -6,10 +6,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy import text as satext
 from sqlmodel import Field, SQLModel
 
 
@@ -82,6 +84,30 @@ class ScheduleEntry(SQLModel, table=True):
             ["schedule_entries.plan_id", "schedule_entries.id"],
             ondelete="CASCADE",
             name="schedule_entries_replaces_entry_id_fkey",
+        ),
+        # One live row per root per date, PER KIND - see the comment above
+        # is_cancellation() in app/services/resolution.py for why these
+        # predicates re-express that function's logic and why kind is two
+        # indexes, not one. Migration 964556b89ff0 creates these against
+        # existing data; keep both in sync if this ever changes.
+        Index(
+            "uq_schedule_entries_one_cancellation_per_day",
+            "replaces_entry_id",
+            "on_date",
+            unique=True,
+            postgresql_where=satext(
+                "replaces_entry_id IS NOT NULL AND workout_id IS NULL AND name_override IS NULL"
+            ),
+        ),
+        Index(
+            "uq_schedule_entries_one_replacement_per_day",
+            "replaces_entry_id",
+            "on_date",
+            unique=True,
+            postgresql_where=satext(
+                "replaces_entry_id IS NOT NULL"
+                " AND (workout_id IS NOT NULL OR name_override IS NOT NULL)"
+            ),
         ),
     )
 

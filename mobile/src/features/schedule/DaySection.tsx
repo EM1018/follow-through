@@ -100,9 +100,16 @@ function DayContent({
           />
         );
       })}
-      {day.cancelled.map((target) => (
+      {day.cancelled.map((target, index) => (
+        // target.entry_id is the replaced ROOT's id, not the cancellation
+        // row's own id (EntryRefRead doesn't carry that) - two live
+        // cancellations against the same root used to both surface here with
+        // the same entry_id. The backend now forbids that at the source
+        // (migration 964556b89ff0), so this is a backstop, not the fix: the
+        // index keeps this key unique even under a transient/optimistic
+        // duplicate rather than crashing React.
         <DayItem
-          key={target.entry_id}
+          key={`${target.entry_id}-${index}`}
           state="cancelled"
           name={target.name ?? 'Untitled'}
           onPress={() => onEntryPress({ kind: 'cancelled', target })}
