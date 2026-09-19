@@ -6,22 +6,18 @@ A mobile app for helping me stay consistent with workout plans, follow through o
 The Goal:
 follow-thru is a tool that aims to make it easier for users to visualize their workout plan and goals. It also aims to help users stick to their workout plans by allowing them to set custom goals for themselves, send friendly challenges, and log their activities. follow-thru is for individuals who want to better organize their workout plan, meet their goals, stay motivated and motivate others, and help others follow through on their goals by participating in friendly challenges. 
 
-## Demo
-
-*[Add a screen recording or GIF of the app here, e.g.:]*
-`![demo](docs/demo.gif)`
-
-*[Optional: screenshots of key screens — plan view, schedule, workout entry — laid out side by side.]*
-
-*[Optional: link to TestFlight if you've published a build.]*
 
 ## Features
 
-*[Bullet the things a user can actually do. Keep each one concrete — "create a workout plan and schedule it across the week," not "workout management." e.g.:]*
 
-- ...
-- ...
-- ...
+
+- Create a custom workout plan where you decide when it starts and ends 
+- Add workouts to your plan for each day of the week
+- Choose when you want to repeat your workouts, e.g. Bench Press every Monday
+- If you want to switch it up one day, swap a workout for a new or existing workout 
+- Set custom goals that you want to accomplish over a certain amount of time, or for as long as you can
+- Complete your workouts and log them so you can see your progress visually through a contribution-style graph
+- Send friendly challenges to friends where you both participate in the challenge that you send them, or that they send you [in development]
 
 ## Tech Stack
 
@@ -32,9 +28,7 @@ follow-thru is a tool that aims to make it easier for users to visualize their w
 | Contract  | OpenAPI spec generated from FastAPI → TypeScript types via `openapi-typescript` |
 | Testing   | pytest / pytest-asyncio (backend), Jest (mobile)                       |
 
-## Architecture
 
-*[Optional: a short paragraph or diagram of how the pieces fit together — e.g. how the mobile client auths against Supabase, gets a JWT, and calls the FastAPI backend which verifies it against Supabase's JWKS endpoint before hitting Postgres.]*
 
 ## Getting Started
 
@@ -87,8 +81,6 @@ npx expo start
 uv run pytest
 ```
 
-*[Optional: mention what's covered — auth, scheduling/resolution logic, DB constraints, migrations — and current coverage % if you want to state one.]*
-
 ## Project Structure
 
 ```
@@ -99,13 +91,3 @@ mobile/         Expo / React Native client
 tests/          Backend test suite
 ```
 
-## Roadmap
-
-*[Optional: what's next / known gaps — useful if this is explicitly a WIP.]*
-
-- [ ] ...
-- [ ] ...
-
-## License
-
-*[Add if you want one — e.g. MIT.]*
