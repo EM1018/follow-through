@@ -96,3 +96,9 @@ export const segmentBar = {
   height: 8,
   gap: spacing.xs,
 } as const;
+
+/** Schedule header's Month/Week/Day segmented control -- equal fixed-width segments until header consolidation resizes it. */
+export const segmentedControl = {
+  segmentWidth: 56,
+  trackPadding: 2,
+} as const;

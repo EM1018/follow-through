@@ -1,7 +1,6 @@
-import { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
+import { colors, fontSize, fontWeight, radius, segmentedControl, spacing } from '@/theme';
 
 import type { ViewMode } from './viewMode';
 
@@ -11,90 +10,56 @@ const OPTIONS: { mode: ViewMode; label: string }[] = [
   { mode: 'day', label: 'Day' },
 ];
 
+/** Month/Week/Day segmented control -- all three options visible, current one raised on a lighter pill. */
 export function ViewModeControl({ value, onChange }: { value: ViewMode; onChange: (mode: ViewMode) => void }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const currentLabel = OPTIONS.find((option) => option.mode === value)?.label ?? 'Day';
-
   return (
-    <View style={styles.container}>
-      <TouchableOpacity
-        style={styles.trigger}
-        onPress={() => setIsOpen((open) => !open)}
-        accessibilityRole="button"
-        accessibilityLabel="Change calendar view"
-      >
-        <Text style={styles.triggerText}>{currentLabel}</Text>
-        <Text style={styles.chevron}>{isOpen ? '▴' : '▾'}</Text>
-      </TouchableOpacity>
-
-      {isOpen ? (
-        <View style={styles.menu}>
-          {OPTIONS.map((option) => (
-            <TouchableOpacity
-              key={option.mode}
-              style={styles.menuItem}
-              onPress={() => {
+    <View style={styles.track} accessibilityRole="tablist">
+      {OPTIONS.map((option) => {
+        const selected = option.mode === value;
+        return (
+          <Pressable
+            key={option.mode}
+            style={[styles.segment, selected && styles.segmentSelected]}
+            onPress={() => {
+              if (!selected) {
                 onChange(option.mode);
-                setIsOpen(false);
-              }}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.menuItemText, option.mode === value && styles.menuItemTextActive]}>
-                {option.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : null}
+              }
+            }}
+            accessibilityRole="tab"
+            accessibilityLabel={`${option.label} view`}
+            accessibilityState={{ selected }}
+          >
+            <Text style={[styles.label, selected && styles.labelSelected]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    zIndex: 10,
-  },
-  trigger: {
+  track: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
+    padding: segmentedControl.trackPadding,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.md,
   },
-  triggerText: {
+  segment: {
+    width: segmentedControl.segmentWidth,
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+  },
+  segmentSelected: {
+    backgroundColor: colors.background,
+  },
+  label: {
     fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
-    color: colors.text,
-  },
-  chevron: {
-    fontSize: fontSize.xs,
     color: colors.textMuted,
   },
-  menu: {
-    position: 'absolute',
-    top: '100%',
-    right: 0,
-    marginTop: spacing.xs,
-    minWidth: 100,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    paddingVertical: spacing.xs,
-  },
-  menuItem: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  menuItemText: {
-    fontSize: fontSize.sm,
-    color: colors.text,
-  },
-  menuItemTextActive: {
-    color: colors.accent,
+  labelSelected: {
     fontWeight: fontWeight.semibold,
+    color: colors.text,
   },
 });
