@@ -9,7 +9,8 @@
     "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.elian.mobile"
+      "bundleIdentifier": "com.elian.mobile",
+      "appleTeamID": "875HK5ZKBK"
     },
     "android": {
       "adaptiveIcon": {
