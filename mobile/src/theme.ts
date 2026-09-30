@@ -65,6 +65,9 @@ export const minRowHeight = {
   day: 56,
 } as const;
 
+/** Smallest comfortable tap height (Apple HIG's 44pt) for standalone text buttons. */
+export const minTouchTarget = 44;
+
 /** Contribution graph cells -- a fixed 0-3 intensity scale, not relative to any single window's data. */
 export const graph = {
   level0: '#E4E4E9',
