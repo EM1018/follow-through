@@ -1,3 +1,4 @@
+import { format } from 'date-fns';
 import { router } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View, type LayoutChangeEvent } from 'react-native';
 
@@ -13,11 +14,20 @@ type PlanHeaderProps = {
   onToggle: () => void;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  focusedDate: Date;
   onLayoutBottom: (bottom: number) => void;
 };
 
-/** The Schedule tab's fixed header: plan name/switcher + workouts link on one row, view mode control below. */
-export function PlanHeader({ plan, open, onToggle, viewMode, onViewModeChange, onLayoutBottom }: PlanHeaderProps) {
+/** The Schedule tab's fixed header: plan name/switcher + workouts link, then month title (Month view only) + view mode control. */
+export function PlanHeader({
+  plan,
+  open,
+  onToggle,
+  viewMode,
+  onViewModeChange,
+  focusedDate,
+  onLayoutBottom,
+}: PlanHeaderProps) {
   const onLayout = (event: LayoutChangeEvent) => {
     const { y, height } = event.nativeEvent.layout;
     onLayoutBottom(y + height);
@@ -54,7 +64,16 @@ export function PlanHeader({ plan, open, onToggle, viewMode, onViewModeChange, o
         </TouchableOpacity>
       </View>
       <View style={styles.controlRow}>
-        <ViewModeControl value={viewMode} onChange={onViewModeChange} />
+        {/* Derived from focusedDate, so it changes once a month swipe settles, not mid-swipe. */}
+        {viewMode === 'month' ? (
+          <Text style={styles.monthTitle} numberOfLines={1} ellipsizeMode="tail" accessibilityRole="header">
+            {format(focusedDate, 'MMMM yyyy')}
+          </Text>
+        ) : null}
+        {/* Right-anchored in every view, so switching views never moves the control -- only the title comes and goes. */}
+        <View style={styles.controlSlot}>
+          <ViewModeControl value={viewMode} onChange={onViewModeChange} />
+        </View>
       </View>
     </View>
   );
@@ -115,8 +134,20 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.semibold,
     color: colors.accent,
   },
-  // A row so the control keeps its intrinsic width instead of stretching across the header.
   controlRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  monthTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
+  },
+  controlSlot: {
+    flexShrink: 0,
+    marginLeft: 'auto',
   },
 });

@@ -79,8 +79,6 @@ function MonthPage({
 
   return (
     <View style={styles.monthPage}>
-      <Text style={styles.monthTitle}>{format(monthStart, 'MMMM yyyy')}</Text>
-
       <View style={styles.headerRow}>
         {WEEKDAY_INITIALS.map((initial, index) => (
           <View key={index} style={styles.headerCell}>
@@ -219,12 +217,6 @@ const styles = StyleSheet.create({
   monthPage: {
     flex: 1,
     gap: spacing.xs,
-  },
-  monthTitle: {
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
-    color: colors.text,
-    textAlign: 'center',
   },
   headerRow: {
     flexDirection: 'row',

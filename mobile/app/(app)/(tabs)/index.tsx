@@ -200,6 +200,7 @@ export default function HomeScreen() {
           onToggle={() => setDropdownOpen((open) => !open)}
           viewMode={viewMode}
           onViewModeChange={setViewMode}
+          focusedDate={focusedDate}
           onLayoutBottom={setHeaderBottom}
         />
       ) : isEmpty ? (

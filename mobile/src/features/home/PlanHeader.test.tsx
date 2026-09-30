@@ -20,21 +20,31 @@ const plan: PlanRead = {
   created_at: '2026-08-01T00:00:00Z',
 };
 
-function render(onToggle = jest.fn()): ReactTestInstance {
+type Props = React.ComponentProps<typeof PlanHeader>;
+
+function renderHeader(overrides: Partial<Props> = {}) {
+  const props: Props = {
+    plan,
+    open: false,
+    onToggle: jest.fn(),
+    viewMode: 'month',
+    onViewModeChange: jest.fn(),
+    focusedDate: new Date(2026, 8, 30),
+    onLayoutBottom: jest.fn(),
+    ...overrides,
+  };
   let tree: ReactTestRenderer;
   act(() => {
-    tree = renderer.create(
-      <PlanHeader
-        plan={plan}
-        open={false}
-        onToggle={onToggle}
-        viewMode="month"
-        onViewModeChange={jest.fn()}
-        onLayoutBottom={jest.fn()}
-      />,
-    );
+    tree = renderer.create(<PlanHeader {...props} />);
   });
-  return tree!.root;
+  return {
+    root: tree!.root,
+    update: (next: Partial<Props>) => act(() => tree.update(<PlanHeader {...props} {...next} />)),
+  };
+}
+
+function render(onToggle = jest.fn()): ReactTestInstance {
+  return renderHeader({ onToggle }).root;
 }
 
 // TouchableOpacity hands its props (onPress included) to the View it renders, so match on
@@ -81,5 +91,46 @@ describe('PlanHeader', () => {
     expect(name).toHaveLength(1);
     expect(name[0].props.numberOfLines).toBe(1);
     expect(name[0].props.ellipsizeMode).toBe('tail');
+  });
+});
+
+describe('PlanHeader month title row', () => {
+  function monthTitles(root: ReactTestInstance) {
+    return root.findAll((node) => node.type === Text && node.props.accessibilityRole === 'header');
+  }
+
+  // Same matcher as ViewModeControl.test: role + onPress picks out each Pressable exactly once.
+  function viewTabs(root: ReactTestInstance) {
+    return root.findAll((node) => node.props.accessibilityRole === 'tab' && typeof node.props.onPress === 'function');
+  }
+
+  it('shows the month title in Month view only', () => {
+    expect(monthTitles(renderHeader({ viewMode: 'month' }).root)).toHaveLength(1);
+    expect(monthTitles(renderHeader({ viewMode: 'week' }).root)).toHaveLength(0);
+    expect(monthTitles(renderHeader({ viewMode: 'day' }).root)).toHaveLength(0);
+  });
+
+  it("titles focusedDate's month, not today's, and follows it when paging", () => {
+    const { root, update } = renderHeader({ focusedDate: new Date(2031, 2, 14) });
+    expect(monthTitles(root)[0].props.children).toBe('March 2031');
+
+    update({ focusedDate: new Date(2031, 5, 14) });
+    expect(monthTitles(root)[0].props.children).toBe('June 2031');
+  });
+
+  it.each(['month', 'week', 'day'] as const)('renders the view control in %s view with it selected', (viewMode) => {
+    const tabs = viewTabs(renderHeader({ viewMode }).root);
+
+    expect(tabs).toHaveLength(3);
+    expect(tabs.map((tab) => tab.props.accessibilityState.selected)).toEqual(
+      ['month', 'week', 'day'].map((mode) => mode === viewMode),
+    );
+  });
+
+  it('truncates the month title to one line with a tail ellipsis', () => {
+    const [title] = monthTitles(renderHeader().root);
+
+    expect(title.props.numberOfLines).toBe(1);
+    expect(title.props.ellipsizeMode).toBe('tail');
   });
 });
