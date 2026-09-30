@@ -315,6 +315,96 @@ async def test_replacement_workout_id_and_name_override_still_mutually_exclusive
     assert name_only_replacement.id is not None
 
 
+async def test_second_cancellation_for_same_root_and_date_violates_unique_index(
+    session: AsyncSession, _entry_parents: tuple[Plan, Workout]
+) -> None:
+    """Constraint backstop for prompt 28: uq_schedule_entries_one_cancellation_per_day
+    must reject a second cancellation-kind row for the same
+    (replaces_entry_id, on_date), independent of the router's own supersede
+    logic - the DB itself is the last line of defense against a duplicate.
+    """
+    plan, workout = _entry_parents
+    target = ScheduleEntry(plan_id=plan.id, workout_id=workout.id, day_of_week=MON)
+    session.add(target)
+    await session.commit()
+
+    first_cancellation = ScheduleEntry(
+        plan_id=plan.id, on_date=date(2026, 8, 10), replaces_entry_id=target.id
+    )
+    session.add(first_cancellation)
+    await session.commit()
+
+    second_cancellation = ScheduleEntry(
+        plan_id=plan.id, on_date=date(2026, 8, 10), replaces_entry_id=target.id
+    )
+    await _assert_violates(
+        session, second_cancellation, "uq_schedule_entries_one_cancellation_per_day"
+    )
+
+
+async def test_second_replacement_for_same_root_and_date_violates_unique_index(
+    session: AsyncSession, _entry_parents: tuple[Plan, Workout]
+) -> None:
+    """Same backstop as above, for replacement-kind rows:
+    uq_schedule_entries_one_replacement_per_day.
+    """
+    plan, workout = _entry_parents
+    target = ScheduleEntry(plan_id=plan.id, workout_id=workout.id, day_of_week=MON)
+    session.add(target)
+    await session.commit()
+
+    first_replacement = ScheduleEntry(
+        plan_id=plan.id,
+        workout_id=workout.id,
+        on_date=date(2026, 8, 10),
+        replaces_entry_id=target.id,
+    )
+    session.add(first_replacement)
+    await session.commit()
+
+    second_replacement = ScheduleEntry(
+        plan_id=plan.id,
+        workout_id=workout.id,
+        on_date=date(2026, 8, 10),
+        replaces_entry_id=target.id,
+    )
+    await _assert_violates(
+        session, second_replacement, "uq_schedule_entries_one_replacement_per_day"
+    )
+
+
+async def test_cancellation_and_replacement_for_same_root_and_date_both_commit(
+    session: AsyncSession, _entry_parents: tuple[Plan, Workout]
+) -> None:
+    """The two partial indexes must not collide with each other - a
+    cancellation and a replacement targeting the same root on the same date
+    is the legitimate swap-over-cancelled state (see EntryActionsSheet's
+    swapMutation) and must stay writable.
+    """
+    plan, workout = _entry_parents
+    target = ScheduleEntry(plan_id=plan.id, workout_id=workout.id, day_of_week=MON)
+    session.add(target)
+    await session.commit()
+
+    cancellation = ScheduleEntry(
+        plan_id=plan.id, on_date=date(2026, 8, 10), replaces_entry_id=target.id
+    )
+    session.add(cancellation)
+    await session.commit()
+
+    replacement = ScheduleEntry(
+        plan_id=plan.id,
+        workout_id=workout.id,
+        on_date=date(2026, 8, 10),
+        replaces_entry_id=target.id,
+    )
+    session.add(replacement)
+    await session.commit()
+
+    assert cancellation.id is not None
+    assert replacement.id is not None
+
+
 async def test_plan_ends_on_before_starts_on_violates_check(session: AsyncSession) -> None:
     user = User(id=uuid.uuid4(), email="plan-dates@example.com")
     session.add(user)

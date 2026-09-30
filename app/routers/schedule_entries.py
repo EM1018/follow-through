@@ -12,7 +12,7 @@ from app.models.plan import Plan
 from app.models.schedule_entry import ScheduleEntry
 from app.models.workout import Workout
 from app.schemas.schedule_entry import ScheduleEntryCreate, ScheduleEntryRead, ScheduleEntryUpdate
-from app.services.resolution import date_within_plan_window
+from app.services.resolution import date_within_plan_window, is_cancellation
 
 router = APIRouter(prefix="/plans/{plan_id}/schedule-entries", tags=["schedule-entries"])
 
@@ -79,6 +79,21 @@ async def _get_owned_entry(
     return entry
 
 
+async def _resolve_to_root(
+    session: AsyncSession, plan_id: uuid.UUID, entry_id: uuid.UUID
+) -> ScheduleEntry:
+    """Follows replaces_entry_id until it reaches a row that replaces
+    nothing. The client already sends the root id directly (see
+    entryPayload.ts), but the endpoint doesn't trust that - a payload
+    pointing at a non-root keeps walking, so chains stay flat regardless of
+    what the caller sends.
+    """
+    entry = await _get_plan_entry(session, plan_id, entry_id)
+    while entry.replaces_entry_id is not None:
+        entry = await _get_plan_entry(session, plan_id, entry.replaces_entry_id)
+    return entry
+
+
 @router.post("", response_model=ScheduleEntryRead, status_code=status.HTTP_201_CREATED)
 async def create_entry(
     body: ScheduleEntryCreate,
@@ -87,12 +102,6 @@ async def create_entry(
 ) -> ScheduleEntry:
     if body.workout_id is not None:
         await _get_plan_workout(session, plan.id, body.workout_id)
-    if body.replaces_entry_id is not None:
-        await _get_plan_entry(session, plan.id, body.replaces_entry_id)
-        # replaces_entry_id is never set without on_date (the create schema's
-        # own XOR validator guarantees it), so this is always reachable here.
-        if body.on_date is not None:
-            await _reject_if_completion_exists(session, body.replaces_entry_id, body.on_date)
 
     for field in ("starts_on", "ends_on", "on_date"):
         value = getattr(body, field)
@@ -102,7 +111,52 @@ async def create_entry(
                 detail=f"{field} must fall within the plan's own window",
             )
 
-    entry = ScheduleEntry(plan_id=plan.id, **body.model_dump())
+    superseded: ScheduleEntry | None = None
+    payload = body.model_dump()
+    if body.replaces_entry_id is not None:
+        root = await _resolve_to_root(session, plan.id, body.replaces_entry_id)
+        payload["replaces_entry_id"] = root.id
+
+        # replaces_entry_id is never set without on_date (the create schema's
+        # own XOR validator guarantees it), so on_date is always set here.
+        # Kind (cancellation vs replacement) matches is_cancellation()'s test -
+        # a row of the OTHER kind targeting the same root+date is left alone,
+        # that pairing is legal (see the comment above is_cancellation()).
+        incoming_is_cancellation = body.workout_id is None and body.name_override is None
+        existing_result = await session.exec(
+            select(ScheduleEntry).where(
+                ScheduleEntry.plan_id == plan.id,
+                ScheduleEntry.replaces_entry_id == root.id,
+                ScheduleEntry.on_date == body.on_date,
+            )
+        )
+        superseded = next(
+            (e for e in existing_result if is_cancellation(e) == incoming_is_cancellation),
+            None,
+        )
+
+        # Root guard: the existing invariant (a completion on the root blocks
+        # cancelling/replacing it) applies regardless of whether a same-kind
+        # row already exists. Superseded-row guard: on top of that, the row
+        # actually about to be deleted must not have its own completion
+        # silently detached via ON DELETE SET NULL - a logged session gets a
+        # 409 instead.
+        await _reject_if_completion_exists(session, root.id, body.on_date)
+        if superseded is not None:
+            await _reject_if_completion_exists(session, superseded.id, body.on_date)
+
+    entry = ScheduleEntry(plan_id=plan.id, **payload)
+    if superseded is not None:
+        # Flushed before the insert, not just ordered before it in the unit
+        # of work - SQLAlchemy doesn't guarantee DELETEs flush before
+        # INSERTs of unrelated rows in the same flush, and this delete/insert
+        # pair share a unique index. Without this, the insert can hit
+        # uq_schedule_entries_one_cancellation_per_day/
+        # uq_schedule_entries_one_replacement_per_day before the delete that
+        # was supposed to make room for it. Same DB transaction either way,
+        # so this is still one commit or none.
+        await session.delete(superseded)
+        await session.flush()
     session.add(entry)
     await session.commit()
     await session.refresh(entry)

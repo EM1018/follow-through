@@ -237,6 +237,30 @@ describe('DaySection', () => {
     // Only the one live entry gets a circle -- the cancelled row never does.
     expect(markLabels).toEqual(['Mark Tempo Run not done']);
   });
+
+  it('renders two cancelled rows referencing the same replaced target without a duplicate-key warning', () => {
+    // Regression for prompt 28: two live cancellation rows against the same
+    // root used to both surface here with the same entry_id (the replaced
+    // root's id, not the cancellation row's own id), which React reports as
+    // a duplicate key rather than a render error -- a test that only checks
+    // "did it throw" would miss this entirely.
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const day: DaySchedule = {
+      status: 'cancelled',
+      entries: [],
+      cancelled: [cancelledTarget, cancelledTarget],
+      completed: false,
+    };
+
+    expect(() => renderWithClient(<DaySection {...baseProps({ day })} />)).not.toThrow();
+
+    const keyWarnings = consoleError.mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('same key'),
+    );
+    expect(keyWarnings).toEqual([]);
+
+    consoleError.mockRestore();
+  });
 });
 
 describe('DaySection tap to log/unlog', () => {

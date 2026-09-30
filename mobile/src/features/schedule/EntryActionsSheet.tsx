@@ -260,14 +260,34 @@ export function EntryActionsSheet({
     onSuccess: invalidateAndClose,
   });
 
-  // Cancel from a substituted day: the existing replacement has to go first,
-  // or the new cancellation (which only suppresses the root) never becomes
-  // visible -- the replacement would keep winning. Sequential, not atomic;
-  // an honest partial-failure message rather than a rollback, matching how
-  // Change swap (Stage 2) behaves.
+  // Cancel from a substituted day: the existing replacement has to go, but
+  // what happens next depends on whether swapping onto this day already left
+  // a cancellation behind (see swapMutation's comment -- that path posts
+  // only, on purpose, and never deletes one). If it did, this is Undo Swap in
+  // disguise: deleting the replacement is enough, since the day falls back to
+  // that existing cancellation on its own. Posting a second one would be
+  // exactly the duplicate the backend's one-cancellation-per-root-per-day
+  // index now rejects. Only when there's no existing cancellation (a plain
+  // swap being cancelled outright) does this post a new one against the
+  // root. Sequential, not atomic; an honest partial-failure message rather
+  // than a rollback, matching how Change swap (Stage 2) behaves.
   const cancelSubstitutedMutation = useMutation<ReplaceResult, ApiError, void>({
-    mutationFn: () =>
-      replaceExisting(planId, (rawEntry as ScheduleEntry).id, cancellationPayload((root as ScheduleEntry).id, dateParam)),
+    mutationFn: async () => {
+      const existingCancellation = findCancellationEntry(entries, dateParam, (root as ScheduleEntry).id);
+      if (existingCancellation) {
+        await unwrap(
+          api.DELETE('/plans/{plan_id}/schedule-entries/{entry_id}', {
+            params: { path: { plan_id: planId, entry_id: (rawEntry as ScheduleEntry).id } },
+          }),
+        );
+        return { created: true };
+      }
+      return replaceExisting(
+        planId,
+        (rawEntry as ScheduleEntry).id,
+        cancellationPayload((root as ScheduleEntry).id, dateParam),
+      );
+    },
     onSuccess: (result) => {
       invalidatePlanScheduleData(queryClient, planId);
       if (!result.created) {
