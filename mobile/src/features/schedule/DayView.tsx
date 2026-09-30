@@ -1,5 +1,5 @@
-import { addDays, differenceInCalendarDays, format } from 'date-fns';
-import { useCallback, useMemo } from 'react';
+import { addDays, format } from 'date-fns';
+import { useCallback, useState } from 'react';
 import {
   FlatList,
   type NativeScrollEvent,
@@ -12,9 +12,9 @@ import { useSchedule } from './api';
 import { DaySection } from './DaySection';
 import type { EntryTarget } from './EntryActionsSheet';
 
-// Fixed range of +/-180 days around today, rather than an infinite recentering
-// window -- same rationale Stage 4 uses for week periods: simpler, adequate
-// for the use case, and avoids scroll-position bugs.
+// Fixed range of +/-180 days around the focused date at mount, rather than an
+// infinite recentering window -- same rationale Stage 4 uses for week periods:
+// simpler, adequate for the use case, and avoids scroll-position bugs.
 const DAY_WINDOW = 180;
 const DAY_OFFSETS = Array.from({ length: DAY_WINDOW * 2 + 1 }, (_, i) => i - DAY_WINDOW);
 
@@ -55,7 +55,6 @@ function DayPage({
 
 export function DayView({
   planId,
-  today,
   focusedDate,
   onFocusedDateChange,
   planStartsOn,
@@ -65,7 +64,6 @@ export function DayView({
   width,
 }: {
   planId: string;
-  today: Date;
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
@@ -74,16 +72,10 @@ export function DayView({
   onRequestEntryAction: (target: EntryTarget, date: Date) => void;
   width: number;
 }) {
-  const offsets = useMemo(() => DAY_OFFSETS, []);
-
-  const initialIndex = useMemo(() => {
-    const offset = differenceInCalendarDays(focusedDate, today);
-    return Math.min(Math.max(offset + DAY_WINDOW, 0), offsets.length - 1);
-    // Only meaningful at mount -- FlatList's initialScrollIndex isn't reactive,
-    // which is fine here since DayView remounts fresh whenever the mode switches
-    // back to 'day', picking up whatever focusedDate is current at that point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Frozen at mount: both directions of the page<->date mapping read this one
+  // anchor, so a swipe can't shift the mapping under the user. The view
+  // remounts on every mode switch, re-centring on whatever focusedDate is then.
+  const [anchor] = useState(() => focusedDate);
 
   const getItemLayout = useCallback(
     (_data: ArrayLike<number> | null | undefined, index: number) => ({
@@ -100,12 +92,12 @@ export function DayView({
         return;
       }
       const index = Math.round(event.nativeEvent.contentOffset.x / width);
-      const offset = offsets[index];
+      const offset = DAY_OFFSETS[index];
       if (offset !== undefined) {
-        onFocusedDateChange(addDays(today, offset));
+        onFocusedDateChange(addDays(anchor, offset));
       }
     },
-    [width, offsets, today, onFocusedDateChange],
+    [width, anchor, onFocusedDateChange],
   );
 
   const renderItem = useCallback(
@@ -113,7 +105,7 @@ export function DayView({
       <View style={{ width }}>
         <DayPage
           planId={planId}
-          date={addDays(today, offset)}
+          date={addDays(anchor, offset)}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={onRequestAdd}
@@ -121,20 +113,20 @@ export function DayView({
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
+    [planId, anchor, width, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
   );
 
   return (
     <FlatList
       style={styles.pager}
-      data={offsets}
+      data={DAY_OFFSETS}
       keyExtractor={(offset) => String(offset)}
       renderItem={renderItem}
       horizontal
       pagingEnabled
       showsHorizontalScrollIndicator={false}
       getItemLayout={getItemLayout}
-      initialScrollIndex={initialIndex}
+      initialScrollIndex={DAY_WINDOW}
       onMomentumScrollEnd={onMomentumScrollEnd}
       windowSize={3}
     />

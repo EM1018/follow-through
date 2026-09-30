@@ -2,18 +2,27 @@ import {
   addDays,
   addMonths,
   differenceInCalendarDays,
+  differenceInCalendarMonths,
   endOfMonth,
   endOfWeek,
   startOfMonth,
   startOfWeek,
 } from 'date-fns';
 
-// Fixed range of +/-24 months around today, same rationale as Day/Week's fixed windows.
+// Fixed range of +/-24 months around the focused date's month at mount, same rationale as Day/Week's fixed windows.
 export const MONTH_WINDOW = 24;
 export const MONTH_OFFSETS = Array.from({ length: MONTH_WINDOW * 2 + 1 }, (_, i) => i - MONTH_WINDOW);
 
-export function monthStartFor(today: Date, offset: number): Date {
-  return startOfMonth(addMonths(today, offset));
+export function monthStartFor(anchor: Date, offset: number): Date {
+  return startOfMonth(addMonths(anchor, offset));
+}
+
+/**
+ * `date`'s day-of-month carried into `monthStart`'s month, clamped to its length
+ * (Jan 31 -> Feb 28). Accepted as lossy: paging back from there gives Jan 28.
+ */
+export function sameDayOfMonthIn(monthStart: Date, date: Date): Date {
+  return addMonths(date, differenceInCalendarMonths(monthStart, date));
 }
 
 export type MonthCell = { date: Date; inMonth: boolean };

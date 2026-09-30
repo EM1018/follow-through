@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { addDays, differenceInCalendarWeeks, format } from 'date-fns';
+import { addDays, format, isSameDay } from 'date-fns';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
@@ -14,14 +14,14 @@ import { spacing } from '@/theme';
 import { scheduleQueryOptions, useSchedule } from './api';
 import { DaySection } from './DaySection';
 import type { EntryTarget } from './EntryActionsSheet';
-import { selectedDateForWeek } from './weekSelection';
-import { WEEK_OFFSETS, WEEK_WINDOW, weekDates, weekStartFor } from './week';
+import { WEEK_OFFSETS, WEEK_WINDOW, sameWeekdayIn, weekDates, weekStartFor } from './week';
 import { WeekStrip } from './WeekStrip';
 
 function WeekPage({
   planId,
   weekStart,
-  today,
+  focusedDate,
+  onFocusedDateChange,
   planStartsOn,
   planEndsOn,
   onRequestAdd,
@@ -29,7 +29,8 @@ function WeekPage({
 }: {
   planId: string;
   weekStart: Date;
-  today: Date;
+  focusedDate: Date;
+  onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
   planEndsOn: Date | null;
   onRequestAdd: (date: Date) => void;
@@ -39,15 +40,20 @@ function WeekPage({
   const scheduleQuery = useSchedule(planId, weekStart, weekEnd);
   const dates = useMemo(() => weekDates(weekStart), [weekStart]);
 
-  // Per-week, ephemeral: a fresh WeekPage mounts (and this re-initializes)
-  // every time paging brings a different week into view -- see the matching
-  // note on WeekView's FlatList windowSize. Never persisted.
-  const [selectedDate, setSelectedDate] = useState(() =>
-    selectedDateForWeek(dates, today, planStartsOn, planEndsOn),
-  );
+  // focusedDate is the one selected day for every view. Off-screen neighbour
+  // pages (whose week doesn't contain it) show the same weekday below the
+  // strip -- the day paging onto them will land on.
+  const dayDate = useMemo(() => sameWeekdayIn(dates, focusedDate), [dates, focusedDate]);
+  const selectedDay = scheduleQuery.data?.days[format(dayDate, 'yyyy-MM-dd')];
 
-  const selectedDateParam = format(selectedDate, 'yyyy-MM-dd');
-  const selectedDay = scheduleQuery.data?.days[selectedDateParam];
+  const onSelectDate = useCallback(
+    (date: Date) => {
+      if (!isSameDay(date, focusedDate)) {
+        onFocusedDateChange(date);
+      }
+    },
+    [focusedDate, onFocusedDateChange],
+  );
 
   return (
     <View style={styles.weekPage}>
@@ -55,18 +61,17 @@ function WeekPage({
         dates={dates}
         schedule={scheduleQuery.data}
         isLoading={scheduleQuery.isLoading}
-        selectedDate={selectedDate}
+        // Highlighting is by isSameDay against this page's own seven dates, so a
+        // neighbour page whose week doesn't contain focusedDate lights up nothing.
+        selectedDate={focusedDate}
         planStartsOn={planStartsOn}
         planEndsOn={planEndsOn}
-        // `dates` is memoized on weekStart, so tapping the already-selected
-        // cell hands back the exact same Date reference -- React's setState
-        // bails out on that by itself, which is what makes the tap a no-op.
-        onSelectDate={setSelectedDate}
+        onSelectDate={onSelectDate}
       />
 
       <DaySection
         planId={planId}
-        date={selectedDate}
+        date={dayDate}
         day={selectedDay}
         isLoading={scheduleQuery.isLoading}
         error={scheduleQuery.error}
@@ -82,7 +87,6 @@ function WeekPage({
 
 export function WeekView({
   planId,
-  today,
   focusedDate,
   onFocusedDateChange,
   planStartsOn,
@@ -92,7 +96,6 @@ export function WeekView({
   width,
 }: {
   planId: string;
-  today: Date;
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
@@ -103,22 +106,20 @@ export function WeekView({
 }) {
   const queryClient = useQueryClient();
 
-  const initialIndex = useMemo(() => {
-    const offset = differenceInCalendarWeeks(focusedDate, today);
-    return Math.min(Math.max(offset + WEEK_WINDOW, 0), WEEK_OFFSETS.length - 1);
-    // Only meaningful at mount -- see the matching note in DayView.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Frozen at mount: both directions of the page<->date mapping read this one
+  // anchor, so a swipe can't shift the mapping under the user. The view
+  // remounts on every mode switch, re-centring on whatever focusedDate is then.
+  const [anchor] = useState(() => focusedDate);
 
   const prefetchOffset = useCallback(
     (offset: number) => {
       if (offset < -WEEK_WINDOW || offset > WEEK_WINDOW) {
         return;
       }
-      const start = weekStartFor(today, offset);
+      const start = weekStartFor(anchor, offset);
       queryClient.prefetchQuery(scheduleQueryOptions(planId, start, addDays(start, 6)));
     },
-    [planId, today, queryClient],
+    [planId, anchor, queryClient],
   );
 
   useEffect(() => {
@@ -147,9 +148,13 @@ export function WeekView({
       }
       prefetchOffset(offset - 1);
       prefetchOffset(offset + 1);
-      onFocusedDateChange(weekStartFor(today, offset));
+      // Keep the weekday: Thu -> next week's Thu, so forward-then-back round-trips.
+      const target = sameWeekdayIn(weekDates(weekStartFor(anchor, offset)), focusedDate);
+      if (!isSameDay(target, focusedDate)) {
+        onFocusedDateChange(target);
+      }
     },
-    [width, prefetchOffset, today, onFocusedDateChange],
+    [width, prefetchOffset, anchor, focusedDate, onFocusedDateChange],
   );
 
   const renderItem = useCallback(
@@ -157,8 +162,9 @@ export function WeekView({
       <View style={{ width }}>
         <WeekPage
           planId={planId}
-          weekStart={weekStartFor(today, offset)}
-          today={today}
+          weekStart={weekStartFor(anchor, offset)}
+          focusedDate={focusedDate}
+          onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onRequestAdd={onRequestAdd}
@@ -166,7 +172,7 @@ export function WeekView({
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
+    [planId, anchor, width, focusedDate, onFocusedDateChange, planStartsOn, planEndsOn, onRequestAdd, onRequestEntryAction],
   );
 
   return (
@@ -179,7 +185,7 @@ export function WeekView({
       pagingEnabled
       showsHorizontalScrollIndicator={false}
       getItemLayout={getItemLayout}
-      initialScrollIndex={initialIndex}
+      initialScrollIndex={WEEK_WINDOW}
       onMomentumScrollEnd={onMomentumScrollEnd}
       windowSize={3}
     />

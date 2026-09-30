@@ -74,4 +74,20 @@ describe('useScheduleSelection', () => {
     expect(latest.currentPlan?.id).toBe('b');
     expect(latest.focusedDate).toEqual(laterDate);
   });
+
+  it.each([
+    ['inside the plan window', '2026-08-01', null],
+    ['before the plan starts', '2026-09-01', null],
+    ['after the plan ended', '2026-01-01', '2026-06-30'],
+  ])('cold start focuses today, %s', (_name, startsOn, endsOn) => {
+    const plan = makePlan({ id: 'a', is_active: true, starts_on: startsOn, ends_on: endsOn });
+    const today = new Date(2026, 7, 12);
+
+    let latest!: Result;
+    act(() => {
+      renderer.create(<Harness plans={[plan]} today={today} onResult={(r) => (latest = r)} />);
+    });
+
+    expect(latest.focusedDate).toEqual(today);
+  });
 });

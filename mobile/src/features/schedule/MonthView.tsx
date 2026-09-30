@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { differenceInCalendarMonths, format, isToday } from 'date-fns';
-import { useCallback, useEffect, useMemo } from 'react';
+import { format, isSameDay, isToday } from 'date-fns';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   type NativeScrollEvent,
@@ -15,7 +15,7 @@ import { DayStatusIndicator } from '@/components/DayStatusIndicator';
 import { colors, fontSize, fontWeight, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
-import { MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, type MonthCell } from './month';
+import { MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, sameDayOfMonthIn, type MonthCell } from './month';
 import { planWindowState } from './planWindow';
 import { ScheduleErrorState } from './ScheduleErrorState';
 
@@ -116,16 +116,16 @@ function MonthPage({
 
 export function MonthView({
   planId,
-  today,
   focusedDate,
+  onFocusedDateChange,
   planStartsOn,
   planEndsOn,
   onSelectDate,
   width,
 }: {
   planId: string;
-  today: Date;
   focusedDate: Date;
+  onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
   planEndsOn: Date | null;
   onSelectDate: (date: Date) => void;
@@ -133,22 +133,20 @@ export function MonthView({
 }) {
   const queryClient = useQueryClient();
 
-  const initialIndex = useMemo(() => {
-    const offset = differenceInCalendarMonths(focusedDate, today);
-    return Math.min(Math.max(offset + MONTH_WINDOW, 0), MONTH_OFFSETS.length - 1);
-    // Only meaningful at mount -- see the matching note in DayView.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Frozen at mount: both directions of the page<->date mapping read this one
+  // anchor, so a swipe can't shift the mapping under the user. The view
+  // remounts on every mode switch, re-centring on whatever focusedDate is then.
+  const [anchor] = useState(() => focusedDate);
 
   const prefetchOffset = useCallback(
     (offset: number) => {
       if (offset < -MONTH_WINDOW || offset > MONTH_WINDOW) {
         return;
       }
-      const grid = monthGrid(monthStartFor(today, offset));
+      const grid = monthGrid(monthStartFor(anchor, offset));
       queryClient.prefetchQuery(scheduleQueryOptions(planId, grid[0].date, grid[grid.length - 1].date));
     },
-    [planId, today, queryClient],
+    [planId, anchor, queryClient],
   );
 
   useEffect(() => {
@@ -177,8 +175,13 @@ export function MonthView({
       }
       prefetchOffset(offset - 1);
       prefetchOffset(offset + 1);
+      // Keep the day-of-month (clamped): Sep 29 -> Dec 29 -> Sep 29.
+      const target = sameDayOfMonthIn(monthStartFor(anchor, offset), focusedDate);
+      if (!isSameDay(target, focusedDate)) {
+        onFocusedDateChange(target);
+      }
     },
-    [width, prefetchOffset],
+    [width, prefetchOffset, anchor, focusedDate, onFocusedDateChange],
   );
 
   const renderItem = useCallback(
@@ -186,14 +189,14 @@ export function MonthView({
       <View style={{ width }}>
         <MonthPage
           planId={planId}
-          monthStart={monthStartFor(today, offset)}
+          monthStart={monthStartFor(anchor, offset)}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onSelectDate={onSelectDate}
         />
       </View>
     ),
-    [planId, today, width, planStartsOn, planEndsOn, onSelectDate],
+    [planId, anchor, width, planStartsOn, planEndsOn, onSelectDate],
   );
 
   return (
@@ -205,7 +208,7 @@ export function MonthView({
       pagingEnabled
       showsHorizontalScrollIndicator={false}
       getItemLayout={getItemLayout}
-      initialScrollIndex={initialIndex}
+      initialScrollIndex={MONTH_WINDOW}
       onMomentumScrollEnd={onMomentumScrollEnd}
       windowSize={3}
     />

@@ -40,7 +40,6 @@ function CalendarArea({
   planId,
   planStartsOn,
   planEndsOn,
-  today,
   viewMode,
   onViewModeChange,
   focusedDate,
@@ -49,7 +48,6 @@ function CalendarArea({
   planId: string;
   planStartsOn: Date;
   planEndsOn: Date | null;
-  today: Date;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   focusedDate: Date;
@@ -90,7 +88,6 @@ function CalendarArea({
       {width > 0 && viewMode === 'day' ? (
         <DayView
           planId={planId}
-          today={today}
           focusedDate={focusedDate}
           onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
@@ -103,7 +100,6 @@ function CalendarArea({
       {width > 0 && viewMode === 'week' ? (
         <WeekView
           planId={planId}
-          today={today}
           focusedDate={focusedDate}
           onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
@@ -116,8 +112,8 @@ function CalendarArea({
       {width > 0 && viewMode === 'month' ? (
         <MonthView
           planId={planId}
-          today={today}
           focusedDate={focusedDate}
+          onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
           onSelectDate={onSelectDateFromMonth}
@@ -145,14 +141,12 @@ function CalendarArea({
 
 function PlanPage({
   plan,
-  today,
   viewMode,
   onViewModeChange,
   focusedDate,
   onFocusedDateChange,
 }: {
   plan: PlanRead;
-  today: Date;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   focusedDate: Date;
@@ -167,7 +161,6 @@ function PlanPage({
         planId={plan.id}
         planStartsOn={planStartsOn}
         planEndsOn={planEndsOn}
-        today={today}
         viewMode={viewMode}
         onViewModeChange={onViewModeChange}
         focusedDate={focusedDate}
@@ -239,8 +232,7 @@ export default function HomeScreen() {
         {currentPlan ? (
           <PlanPage
             plan={currentPlan}
-            today={today}
-            viewMode={viewMode}
+              viewMode={viewMode}
             onViewModeChange={setViewMode}
             focusedDate={focusedDate}
             onFocusedDateChange={setFocusedDate}
