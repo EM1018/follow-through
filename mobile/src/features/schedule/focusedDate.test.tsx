@@ -70,7 +70,7 @@ function Harness({ mode, initial, onSet }: { mode: ViewMode; initial: Date; onSe
   if (mode === 'week') {
     return <WeekView {...common} onRequestAdd={jest.fn()} onRequestEntryAction={jest.fn()} />;
   }
-  return <MonthView {...common} onSelectDate={jest.fn()} />;
+  return <MonthView {...common} onRequestAdd={jest.fn()} onRequestEntryAction={jest.fn()} />;
 }
 
 function mount(mode: ViewMode, initial: Date) {

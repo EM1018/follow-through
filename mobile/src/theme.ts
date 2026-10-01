@@ -68,6 +68,16 @@ export const minRowHeight = {
 /** Smallest comfortable tap height (Apple HIG's 44pt) for standalone text buttons. */
 export const minTouchTarget = 44;
 
+/** Month view grid -- fixed row height so the grid (and anything below it) doesn't resize with the month. */
+export const monthGridRow = {
+  height: 48,
+} as const;
+
+/** Filled circle behind a selected calendar date number. */
+export const selectionCircle = {
+  size: 24,
+} as const;
+
 /** Contribution graph cells -- a fixed 0-3 intensity scale, not relative to any single window's data. */
 export const graph = {
   level0: '#E4E4E9',

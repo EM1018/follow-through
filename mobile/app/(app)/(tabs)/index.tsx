@@ -41,7 +41,6 @@ function CalendarArea({
   planStartsOn,
   planEndsOn,
   viewMode,
-  onViewModeChange,
   focusedDate,
   onFocusedDateChange,
 }: {
@@ -49,7 +48,6 @@ function CalendarArea({
   planStartsOn: Date;
   planEndsOn: Date | null;
   viewMode: ViewMode;
-  onViewModeChange: (mode: ViewMode) => void;
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
 }) {
@@ -65,14 +63,6 @@ function CalendarArea({
       }
     },
     [width],
-  );
-
-  const onSelectDateFromMonth = useCallback(
-    (date: Date) => {
-      onFocusedDateChange(date);
-      onViewModeChange('day');
-    },
-    [onFocusedDateChange, onViewModeChange],
   );
 
   const closeAddModal = useCallback(() => setAddModalDate(null), []);
@@ -116,7 +106,8 @@ function CalendarArea({
           onFocusedDateChange={onFocusedDateChange}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
-          onSelectDate={onSelectDateFromMonth}
+          onRequestAdd={setAddModalDate}
+          onRequestEntryAction={onRequestEntryAction}
           width={width}
         />
       ) : null}
@@ -142,13 +133,11 @@ function CalendarArea({
 function PlanPage({
   plan,
   viewMode,
-  onViewModeChange,
   focusedDate,
   onFocusedDateChange,
 }: {
   plan: PlanRead;
   viewMode: ViewMode;
-  onViewModeChange: (mode: ViewMode) => void;
   focusedDate: Date;
   onFocusedDateChange: (date: Date) => void;
 }) {
@@ -162,7 +151,6 @@ function PlanPage({
         planStartsOn={planStartsOn}
         planEndsOn={planEndsOn}
         viewMode={viewMode}
-        onViewModeChange={onViewModeChange}
         focusedDate={focusedDate}
         onFocusedDateChange={onFocusedDateChange}
       />
@@ -191,7 +179,8 @@ export default function HomeScreen() {
   const [headerBottom, setHeaderBottom] = useState(0);
 
   return (
-    <Screen style={styles.screen}>
+    // No bottom edge: the tab bar already clears the home indicator, so including it here reserved that space twice.
+    <Screen style={styles.screen} edges={['top', 'left', 'right']}>
       <TopBar />
       {currentPlan ? (
         <PlanHeader
@@ -233,8 +222,7 @@ export default function HomeScreen() {
         {currentPlan ? (
           <PlanPage
             plan={currentPlan}
-              viewMode={viewMode}
-            onViewModeChange={setViewMode}
+            viewMode={viewMode}
             focusedDate={focusedDate}
             onFocusedDateChange={setFocusedDate}
           />

@@ -25,6 +25,9 @@ export function sameDayOfMonthIn(monthStart: Date, date: Date): Date {
   return addMonths(date, differenceInCalendarMonths(monthStart, date));
 }
 
+/** A month spans at most six Sunday-start weeks; the grid always reserves this many rows so its height never changes. */
+export const MAX_GRID_ROWS = 6;
+
 export type MonthCell = { date: Date; inMonth: boolean };
 
 /** Full 7-wide grid for the month, including dimmed leading/trailing days from adjacent months. */

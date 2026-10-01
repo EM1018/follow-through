@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { format, isSameDay, isToday } from 'date-fns';
+import { format, isSameDay, isToday, startOfMonth } from 'date-fns';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
@@ -12,12 +12,13 @@ import {
 } from 'react-native';
 
 import { DayStatusIndicator } from '@/components/DayStatusIndicator';
-import { colors, fontSize, fontWeight, spacing } from '@/theme';
+import { colors, fontSize, fontWeight, monthGridRow, selectionCircle, spacing } from '@/theme';
 
 import { scheduleQueryOptions, useSchedule, type DaySchedule } from './api';
-import { MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, sameDayOfMonthIn, type MonthCell } from './month';
+import { MAX_GRID_ROWS, MONTH_OFFSETS, MONTH_WINDOW, monthGrid, monthStartFor, sameDayOfMonthIn, type MonthCell } from './month';
 import { planWindowState } from './planWindow';
-import { ScheduleErrorState } from './ScheduleErrorState';
+import { DaySection } from './DaySection';
+import type { EntryTarget } from './EntryActionsSheet';
 
 const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -26,12 +27,14 @@ function MonthDayCell({
   day,
   isLoading,
   isOutOfWindow,
+  selected,
   onPress,
 }: {
   cell: MonthCell;
   day: DaySchedule | undefined;
   isLoading: boolean;
   isOutOfWindow: boolean;
+  selected: boolean;
   onPress: (date: Date) => void;
 }) {
   const today = isToday(cell.date);
@@ -39,13 +42,26 @@ function MonthDayCell({
   return (
     <TouchableOpacity
       style={[styles.cell, isOutOfWindow && styles.cellOutOfWindow]}
-      onPress={() => onPress(cell.date)}
+      // Spill days stay visible but inert: selecting one would move focusedDate into a
+      // month whose page isn't on screen, and the pager can't follow without re-seeking.
+      onPress={cell.inMonth ? () => onPress(cell.date) : undefined}
+      disabled={!cell.inMonth}
       accessibilityRole="button"
       accessibilityLabel={format(cell.date, 'EEEE, MMMM d')}
     >
-      <Text style={[styles.cellDate, !cell.inMonth && styles.cellDateDim, today && styles.cellDateToday]}>
-        {format(cell.date, 'd')}
-      </Text>
+      {/* Selected wins over today: same fill either way, and the day section's header still says Today. */}
+      <View style={[styles.dateCircle, selected && styles.dateCircleSelected]}>
+        <Text
+          style={[
+            styles.cellDate,
+            !cell.inMonth && styles.cellDateDim,
+            today && styles.cellDateToday,
+            selected && styles.cellDateSelected,
+          ]}
+        >
+          {format(cell.date, 'd')}
+        </Text>
+      </View>
       <View style={styles.indicatorSlot}>
         <DayStatusIndicator status={day?.status} completed={day?.completed} isLoading={isLoading} />
       </View>
@@ -53,17 +69,19 @@ function MonthDayCell({
   );
 }
 
-function MonthPage({
+export function MonthPage({
   planId,
   monthStart,
   planStartsOn,
   planEndsOn,
+  selectedDate,
   onSelectDate,
 }: {
   planId: string;
   monthStart: Date;
   planStartsOn: Date;
   planEndsOn: Date | null;
+  selectedDate: Date;
   onSelectDate: (date: Date) => void;
 }) {
   const grid = useMemo(() => monthGrid(monthStart), [monthStart]);
@@ -99,6 +117,8 @@ function MonthPage({
                   day={scheduleQuery.data?.days[dateParam]}
                   isLoading={scheduleQuery.isLoading}
                   isOutOfWindow={planWindowState(cell.date, planStartsOn, planEndsOn) !== 'within'}
+                  // inMonth: a neighbouring page's spill copy of the same date stays unselected.
+                  selected={cell.inMonth && isSameDay(cell.date, selectedDate)}
                   onPress={onSelectDate}
                 />
               );
@@ -106,8 +126,6 @@ function MonthPage({
           </View>
         ))}
       </View>
-
-      {scheduleQuery.isError ? <ScheduleErrorState error={scheduleQuery.error} onRetry={scheduleQuery.refetch} /> : null}
     </View>
   );
 }
@@ -118,7 +136,8 @@ export function MonthView({
   onFocusedDateChange,
   planStartsOn,
   planEndsOn,
-  onSelectDate,
+  onRequestAdd,
+  onRequestEntryAction,
   width,
 }: {
   planId: string;
@@ -126,10 +145,18 @@ export function MonthView({
   onFocusedDateChange: (date: Date) => void;
   planStartsOn: Date;
   planEndsOn: Date | null;
-  onSelectDate: (date: Date) => void;
+  onRequestAdd: (date: Date) => void;
+  onRequestEntryAction: (target: EntryTarget, date: Date) => void;
   width: number;
 }) {
   const queryClient = useQueryClient();
+
+  // The day section reads the focused month's page query -- same range, so same
+  // cache entry, so no second fetch. Spill days aren't selectable, which keeps
+  // focusedDate inside the month whose page is on screen.
+  const focusedMonthTime = startOfMonth(focusedDate).getTime();
+  const focusedGrid = useMemo(() => monthGrid(new Date(focusedMonthTime)), [focusedMonthTime]);
+  const focusedQuery = useSchedule(planId, focusedGrid[0].date, focusedGrid[focusedGrid.length - 1].date);
 
   // Frozen at mount: both directions of the page<->date mapping read this one
   // anchor, so a swipe can't shift the mapping under the user. The view
@@ -182,6 +209,16 @@ export function MonthView({
     [width, prefetchOffset, anchor, focusedDate, onFocusedDateChange],
   );
 
+  // Selecting stays in Month: the day section below follows focusedDate.
+  const onSelectDate = useCallback(
+    (date: Date) => {
+      if (!isSameDay(date, focusedDate)) {
+        onFocusedDateChange(date);
+      }
+    },
+    [focusedDate, onFocusedDateChange],
+  );
+
   const renderItem = useCallback(
     ({ item: offset }: { item: number }) => (
       <View style={{ width }}>
@@ -190,32 +227,58 @@ export function MonthView({
           monthStart={monthStartFor(anchor, offset)}
           planStartsOn={planStartsOn}
           planEndsOn={planEndsOn}
+          selectedDate={focusedDate}
           onSelectDate={onSelectDate}
         />
       </View>
     ),
-    [planId, anchor, width, planStartsOn, planEndsOn, onSelectDate],
+    [planId, anchor, width, planStartsOn, planEndsOn, focusedDate, onSelectDate],
   );
 
   return (
-    <FlatList
-      data={MONTH_OFFSETS}
-      keyExtractor={(offset) => String(offset)}
-      renderItem={renderItem}
-      horizontal
-      pagingEnabled
-      showsHorizontalScrollIndicator={false}
-      getItemLayout={getItemLayout}
-      initialScrollIndex={MONTH_WINDOW}
-      onMomentumScrollEnd={onMomentumScrollEnd}
-      windowSize={3}
-    />
+    <View style={styles.monthView}>
+      <FlatList
+        style={styles.pager}
+        data={MONTH_OFFSETS}
+        keyExtractor={(offset) => String(offset)}
+        renderItem={renderItem}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        initialScrollIndex={MONTH_WINDOW}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        windowSize={3}
+      />
+
+      {/* Outside the pager: the grid swipes, the card stays put and follows focusedDate once a swipe settles. */}
+      <DaySection
+        planId={planId}
+        date={focusedDate}
+        day={focusedQuery.data?.days[format(focusedDate, 'yyyy-MM-dd')]}
+        isLoading={focusedQuery.isLoading}
+        error={focusedQuery.error}
+        onRetry={focusedQuery.refetch}
+        planStartsOn={planStartsOn}
+        planEndsOn={planEndsOn}
+        onRequestAdd={onRequestAdd}
+        onRequestEntryAction={onRequestEntryAction}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  monthPage: {
+  monthView: {
     flex: 1,
+    gap: spacing.md,
+  },
+  // ScrollView defaults to flexGrow: 1; without this the pager would take the card's space.
+  // Its height is then just one page's: weekday row + the fixed six-row grid.
+  pager: {
+    flexGrow: 0,
+  },
+  monthPage: {
     gap: spacing.xs,
   },
   headerRow: {
@@ -231,21 +294,32 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.semibold,
     color: colors.textMuted,
   },
+  // Always six rows tall, even for 4- and 5-week months, so content below the grid never moves.
   grid: {
-    flex: 1,
+    height: monthGridRow.height * MAX_GRID_ROWS,
   },
   gridRow: {
-    flex: 1,
+    height: monthGridRow.height,
     flexDirection: 'row',
   },
+  // No top padding: circle + gap + dot slot (26 + 4 + 14) has to fit the 48pt row.
   cell: {
     flex: 1,
     alignItems: 'center',
-    paddingTop: spacing.xs,
     gap: spacing.xs,
   },
   cellOutOfWindow: {
     backgroundColor: colors.surfaceMuted,
+  },
+  dateCircle: {
+    width: selectionCircle.size,
+    height: selectionCircle.size,
+    borderRadius: selectionCircle.size / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateCircleSelected: {
+    backgroundColor: colors.accent,
   },
   cellDate: {
     fontSize: fontSize.sm,
@@ -258,6 +332,9 @@ const styles = StyleSheet.create({
   cellDateToday: {
     color: colors.accent,
     fontWeight: fontWeight.bold,
+  },
+  cellDateSelected: {
+    color: colors.background,
   },
   indicatorSlot: {
     height: fontSize.sm,
