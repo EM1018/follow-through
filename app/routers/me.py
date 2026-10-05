@@ -32,7 +32,7 @@ async def update_me(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if "ix_users_username" in str(exc.orig):
+        if "uq_users_username_lower" in str(exc.orig):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="Username is already taken"
             ) from exc

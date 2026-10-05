@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-_USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,20}$")
+_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 
 
 class MeRead(BaseModel):
@@ -26,14 +26,14 @@ class MeUpdate(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def _normalize_username(cls, value: str | None) -> str | None:
+    def _validate_username(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        # Lowercased before anything else - "Jordan_R" and "jordan_r" are the
-        # same name, and the format pattern itself is lowercase-only.
-        value = value.lower()
+        # Stored as typed, not lowercased - "Jordan_R" keeps its capitals on
+        # screen. "Jordan_R" and "jordan_r" are still the same name, but that
+        # is enforced by the uq_users_username_lower index, not here.
         if not _USERNAME_PATTERN.match(value):
-            raise ValueError("username must be 3-20 lowercase letters, digits, or underscores")
+            raise ValueError("username must be 3-20 letters, digits, or underscores")
         return value
 
     @field_validator("timezone")

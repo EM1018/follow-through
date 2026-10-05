@@ -87,6 +87,12 @@ class Commitment(SQLModel, table=True):
     # ongoing goal that was stopped still says Ongoing in its terms, with this
     # as a separate fact recording when it stopped.
     ended_on: date | None = Field(default=None)
+    
+    # gives us who ended it (a quit. we only have ended_on as of rn)
+    # not written to until later
+    ended_by_id: uuid.UUID | None = Field(
+        default=None, foreign_key="users.id", ondelete="SET NULL"
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     )

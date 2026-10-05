@@ -39,13 +39,13 @@ async def test_set_username_is_200_and_stored_lowercase(
 
 
 @pytest.mark.asyncio
-async def test_mixed_case_username_is_normalized_to_lowercase(
+async def test_mixed_case_username_is_stored_as_typed(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _me = authed_client
     response = await client.patch("/me", json={"username": "Jordan_R"})
     assert response.status_code == 200, response.text
-    assert response.json()["username"] == "jordan_r"
+    assert response.json()["username"] == "Jordan_R"
 
 
 @pytest.mark.asyncio
@@ -74,6 +74,50 @@ async def test_claiming_taken_username_different_case_is_409(
     app.dependency_overrides[get_current_user] = lambda: me
     response = await client.patch("/me", json={"username": "SAM"})
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_username_capitalization_is_stored_and_returned_unchanged(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    response = await client.patch("/me", json={"username": "TestUser"})
+    assert response.status_code == 200, response.text
+    assert response.json()["username"] == "TestUser"
+
+    again = await client.get("/me")
+    assert again.json()["username"] == "TestUser"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_casing", ["testuser", "TESTUSER"])
+async def test_claiming_taken_mixed_case_username_in_another_casing_is_409(
+    authed_client: tuple[AsyncClient, CurrentUser], second_user: CurrentUser, other_casing: str
+) -> None:
+    client, me = authed_client
+    app.dependency_overrides[get_current_user] = lambda: second_user
+    taken = await client.patch("/me", json={"username": "TestUser"})
+    assert taken.status_code == 200, taken.text
+
+    app.dependency_overrides[get_current_user] = lambda: me
+    response = await client.patch("/me", json={"username": other_casing})
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Username is already taken"}
+
+
+@pytest.mark.asyncio
+async def test_changing_only_the_capitalization_of_own_username_is_200(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, _me = authed_client
+    first = await client.patch("/me", json={"username": "sam"})
+    assert first.status_code == 200, first.text
+
+    # Same lower(username) key on the same row - an UPDATE never conflicts
+    # with the row it is updating, so this is a display change, not a 409.
+    second = await client.patch("/me", json={"username": "Sam"})
+    assert second.status_code == 200, second.text
+    assert second.json()["username"] == "Sam"
 
 
 @pytest.mark.asyncio
