@@ -1,10 +1,11 @@
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from app.models.commitment import Commitment
+from app.models.commitment import Commitment, InviteStatus
 from app.models.completion import Completion
 from app.services.activities import Unit
 
@@ -199,3 +200,88 @@ def compute_progress(
         weeks_passed=weeks_passed,
         weeks_total=weeks_total,
     )
+
+
+# How long a pending invite stays answerable. The only place this number
+# lives - everything that cares whether an invite is still live calls
+# is_live_pending() rather than redoing the arithmetic, so the list read, the
+# accept guard, and the duplicate check at send can never disagree about it.
+INVITE_LIVE_DAYS = 14
+
+
+def is_live_pending(commitment: Commitment, today: date) -> bool:
+    """Whether `commitment` is a pending invite that can still be answered.
+
+    Expiry is derived, never stored - same idea as "finished", which is
+    computed from starts_on + duration_weeks rather than flagged. There is no
+    `expired` invite_status and no job that writes one; a pending row just
+    stops being live once INVITE_LIVE_DAYS have passed. The bound is
+    exclusive: live through day 13, expired from day 14 on.
+    """
+    if commitment.invite_status != InviteStatus.PENDING:
+        return False
+
+    return today - commitment.created_at.date() < timedelta(days=INVITE_LIVE_DAYS)
+
+
+class CommitmentStatus(StrEnum):
+    GOAL = "goal"
+    DECLINED = "declined"
+    SENT = "sent"
+    INVITE = "invite"
+    EXPIRED = "expired"
+    ENDED_EARLY = "ended_early"
+    FINISHED = "finished"
+    ACTIVE = "active"
+
+
+def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> CommitmentStatus:
+    """The one status a commitment has for `viewer_id` as of `today`.
+
+    A ladder, not a set of independent checks - several rungs can be true of
+    the same row at once, so the order below is the rule, not a style choice.
+
+    Clock-blind, like compute_progress(): `today` is computed once per request
+    by the caller and handed to both, so status and progress can never land on
+    different dates either side of midnight within a single response.
+    """
+    if commitment.invite_status is None:
+        return CommitmentStatus.GOAL
+
+    if commitment.invite_status == InviteStatus.DECLINED:
+        return CommitmentStatus.DECLINED
+
+    if commitment.invite_status == InviteStatus.PENDING:
+        if not is_live_pending(commitment, today):
+            return CommitmentStatus.EXPIRED
+        # One row holds both participants - there is no second row for the
+        # recipient - so the same pending row reads differently depending on
+        # who is looking at it.
+        if viewer_id == commitment.creator_id:
+            return CommitmentStatus.SENT
+        return CommitmentStatus.INVITE
+
+    # Only accepted challenges get this far, and one without both terms is an
+    # impossible row: Ongoing is rejected at send, and accept stamps starts_on
+    # in the same transaction that sets the status. Answering "active" would
+    # be a challenge that never finishes and never leaves anyone's list with
+    # nothing reporting a problem - raising points at the write path that let
+    # the row through instead. Pending rows legitimately have no starts_on,
+    # which is why this sits below their rung and not above it.
+    if commitment.starts_on is None:
+        raise ValueError(f"accepted challenge {commitment.id} has no starts_on")
+    if commitment.duration_weeks is None:
+        raise ValueError(f"accepted challenge {commitment.id} has no duration_weeks")
+
+    # ended_on before the end-date comparison, always. A quit challenge
+    # eventually passes its original end date too - checked the other way
+    # round, every quit would quietly turn into "finished" once enough time
+    # went by, and who ended it early would drop out of the UI.
+    if commitment.ended_on is not None:
+        return CommitmentStatus.ENDED_EARLY
+
+    ends_on = commitment.starts_on + timedelta(weeks=commitment.duration_weeks)
+    if today >= ends_on:
+        return CommitmentStatus.FINISHED
+
+    return CommitmentStatus.ACTIVE
