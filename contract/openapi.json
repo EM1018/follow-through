@@ -142,6 +142,17 @@
             ],
             "title": "Duration Weeks"
           },
+          "recipient_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Username"
+          },
           "sessions_per_week": {
             "maximum": 7.0,
             "minimum": 1.0,

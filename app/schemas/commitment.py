@@ -17,6 +17,9 @@ class CommitmentCreate(BaseModel):
     target_unit: Unit | None = None
     sessions_per_week: int = Field(ge=1, le=7)
     duration_weeks: int | None = Field(default=None, ge=1, le=8)
+    # Present -> challenge, absent -> goal. A username rather than an id: the
+    # sender types who they're challenging, and the server resolves it.
+    recipient_username: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "CommitmentCreate":

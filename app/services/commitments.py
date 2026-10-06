@@ -117,7 +117,17 @@ def compute_progress(
     passed in here, not this function's body.
     """
     starts_on = commitment.starts_on
-    assert starts_on is not None  # goals always have one - ck_commitments_goal_shape
+    if starts_on is None:
+        # A challenge nobody has accepted yet - its clock starts at accept, so
+        # there are no blocks to walk. Goals never get here
+        # (ck_commitments_goal_shape).
+        return Progress(
+            blocks=[],
+            current_streak=0,
+            longest_streak=0,
+            weeks_passed=0,
+            weeks_total=commitment.duration_weeks or 0,
+        )
 
     if commitment.ended_on is not None:
         # Only fully-elapsed blocks (ends_on <= ended_on) survive - one still
@@ -285,3 +295,21 @@ def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> 
         return CommitmentStatus.FINISHED
 
     return CommitmentStatus.ACTIVE
+
+
+def blocks_new_challenge(commitment: Commitment, today: date) -> bool:
+    """Whether an existing challenge between two people stops them starting
+    another one for the same activity: it does while it's active or still an
+    answerable invite, and stops the moment it's declined, expired, quit, or
+    finished.
+
+    Built from is_live_pending() and derive_status() rather than its own date
+    arithmetic - if this drifted from them, an expired invite could vanish
+    from both participants' lists while still blocking every new send, with
+    nothing in the app able to clear it.
+    """
+    if is_live_pending(commitment, today):
+        return True
+    # "active" reads the same for both participants, so whose eyes
+    # derive_status looks through doesn't matter here.
+    return derive_status(commitment, commitment.creator_id, today) == CommitmentStatus.ACTIVE

@@ -331,6 +331,8 @@ export interface components {
             activity: components["schemas"]["Activity"];
             /** Duration Weeks */
             duration_weeks?: number | null;
+            /** Recipient Username */
+            recipient_username?: string | null;
             /** Sessions Per Week */
             sessions_per_week: number;
             target_unit?: components["schemas"]["Unit"] | null;
