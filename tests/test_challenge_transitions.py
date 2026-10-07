@@ -21,12 +21,18 @@ from app.routers import commitments as commitments_router
 from app.routers.commitments import (
     CHALLENGE_ALREADY_ACCEPTED,
     CHALLENGE_CAP_REACHED,
+    CHALLENGE_NOT_ACTIVE,
     INVITE_EXPIRED,
     INVITE_NOT_PENDING,
     INVITE_UNAVAILABLE,
 )
 from app.services import dates
-from app.services.commitments import CHALLENGE_CAP, INVITE_LIVE_DAYS
+from app.services.commitments import (
+    CHALLENGE_CAP,
+    INVITE_LIVE_DAYS,
+    CommitmentStatus,
+    derive_status,
+)
 from tests.conftest import test_session_maker as session_maker
 
 SENDER_USERNAME = "sender_one"
@@ -570,3 +576,256 @@ async def test_simultaneous_accepts_cannot_exceed_the_cap(
             )
         )
     assert len(accepted) == CHALLENGE_CAP
+
+
+# quit
+
+
+async def _accept(invite: Invite) -> None:
+    """Leaves the recipient as the acting user."""
+    _switch_user(invite.recipient)
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert response.status_code == 200, response.text
+
+
+async def test_creator_quits_an_active_challenge(invite: Invite) -> None:
+    await _accept(invite)
+    _switch_user(invite.sender)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_on"] == _today().isoformat()
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on == _today()
+    assert row.ended_by_id == invite.sender.user_id
+
+
+async def test_recipient_quits_an_active_challenge(invite: Invite) -> None:
+    await _accept(invite)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on == _today()
+    assert row.ended_by_id == invite.recipient.user_id
+
+
+async def test_non_participant_cannot_quit(invite: Invite, session: AsyncSession) -> None:
+    await _accept(invite)
+    _switch_user(await _make_user(session))
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 404
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on is None
+
+
+async def test_quitting_a_pending_invite_is_rejected(invite: Invite) -> None:
+    # Neither side can: the sender withdraws, the recipient declines.
+    for user in (invite.sender, invite.recipient):
+        _switch_user(user)
+
+        response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+        assert response.status_code == 409
+        assert _code(response) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+    assert row.ended_on is None
+    assert row.ended_by_id is None
+
+
+async def test_quitting_an_already_ended_challenge_is_rejected(invite: Invite) -> None:
+    await _accept(invite)
+    first = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert first.status_code == 200, first.text
+    _switch_user(invite.sender)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_NOT_ACTIVE
+    # Whoever quit first stays on record.
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_by_id == invite.recipient.user_id
+
+
+async def test_quitting_a_finished_challenge_is_rejected(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    # 4 weeks long, started 4 weeks ago - today is the first day after it.
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(weeks=4))
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on is None
+    assert row.ended_by_id is None
+
+
+async def test_a_quit_challenge_reads_ended_early_for_both_even_past_its_end_date(
+    invite: Invite,
+) -> None:
+    """The ordering rung in derive_status, through a real quit rather than a
+    hand-built row: once enough time passes a quit challenge is also past its
+    original end date, and must not turn into a plain "finished".
+    """
+    await _accept(invite)
+    quit_response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.duration_weeks is not None
+    long_after = _today() + timedelta(weeks=row.duration_weeks + 1)
+    for viewer in (invite.sender, invite.recipient):
+        assert derive_status(row, viewer.user_id, _today()) == CommitmentStatus.ENDED_EARLY
+        assert derive_status(row, viewer.user_id, long_after) == CommitmentStatus.ENDED_EARLY
+
+
+async def test_quitting_at_the_cap_frees_a_slot_for_a_new_invite(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP)
+    _switch_user(invite.recipient)
+    blocked = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert blocked.status_code == 409
+    assert _code(blocked) == CHALLENGE_CAP_REACHED
+    async with session_maker() as fresh:
+        running = (
+            await fresh.exec(
+                select(Commitment).where(Commitment.invite_status == InviteStatus.ACCEPTED)
+            )
+        ).first()
+    assert running is not None
+
+    quit_response = await invite.client.post(f"/commitments/{running.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+
+
+async def test_a_quit_challenge_stays_and_neither_participant_can_delete_it(
+    invite: Invite,
+) -> None:
+    await _accept(invite)
+    quit_response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+
+    # Including the one who quit.
+    as_recipient = await invite.client.delete(f"/commitments/{invite.id}")
+    _switch_user(invite.sender)
+    as_creator = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert as_recipient.status_code == 404
+    assert as_creator.status_code == 409
+    assert _code(as_creator) == CHALLENGE_ALREADY_ACCEPTED
+    assert await _fetch(invite.id) is not None
+
+
+async def test_ended_on_uses_the_quitters_timezone(invite: Invite, session: AsyncSession) -> None:
+    # 2026-08-09 02:00 UTC is already the 9th in Tokyo (11:00) but still the
+    # 8th in Los Angeles (19:00 PDT).
+    instant = datetime(2026, 8, 9, 2, 0, tzinfo=UTC)
+    for user, timezone in (
+        (invite.sender, "America/Los_Angeles"),
+        (invite.recipient, "Asia/Tokyo"),
+    ):
+        row = await session.get(User, user.user_id)
+        assert row is not None
+        row.timezone = timezone
+        session.add(row)
+    await session.commit()
+    await _update_commitment(session, invite.id, created_at=instant - timedelta(hours=1))
+
+    with patch.object(dates, "_now", return_value=instant):
+        await _accept(invite)  # by the recipient, in Tokyo
+        _switch_user(invite.sender)
+        response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["starts_on"] == "2026-08-09"
+    assert response.json()["ended_on"] == "2026-08-08"
+
+
+async def test_simultaneous_quits_record_exactly_one_quitter(invite: Invite) -> None:
+    """Both participants quit at the same moment: one does, and the other is
+    told it's already over rather than overwriting who ended it.
+    """
+    await _accept(invite)
+
+    def by_header(x_test_user: str = Header()) -> CurrentUser:
+        return CurrentUser(user_id=uuid.UUID(x_test_user), email="race@example.com")
+
+    app.dependency_overrides[get_current_user] = by_header
+    participants = (invite.sender, invite.recipient)
+
+    # Same trick as the cap race: left to chance the two requests don't
+    # overlap, so each is held just before its commit until the other gets
+    # there too. Without the row lock both would arrive having read "active".
+    # With it, the second can't even read the row while the first is held, so
+    # the first gives up waiting and commits.
+    real_commit = AsyncSession.commit
+    arrived = 0
+    both_arrived = asyncio.Event()
+
+    async def commit_after_waiting_for_the_other(self: AsyncSession) -> None:
+        nonlocal arrived
+        arrived += 1
+        if arrived == 2:
+            both_arrived.set()
+        try:
+            await asyncio.wait_for(both_arrived.wait(), timeout=0.5)
+        except TimeoutError:
+            pass
+        await real_commit(self)
+
+    with patch.object(AsyncSession, "commit", commit_after_waiting_for_the_other):
+        responses = await asyncio.gather(
+            *(
+                invite.client.post(
+                    f"/commitments/{invite.id}/end",
+                    headers={"X-Test-User": str(user.user_id)},
+                )
+                for user in participants
+            )
+        )
+
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    winner = participants[[r.status_code for r in responses].index(200)]
+    rejected = next(r for r in responses if r.status_code == 409)
+    assert _code(rejected) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_by_id == winner.user_id
+
+
+async def test_a_goal_ended_early_records_its_owner_as_ended_by(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, me = authed_client
+    created = await client.post(
+        "/commitments",
+        json={"activity": "running", "sessions_per_week": 3, "duration_weeks": None},
+    )
+    assert created.status_code == 201, created.text
+
+    response = await client.post(f"/commitments/{created.json()['id']}/end")
+
+    assert response.status_code == 200, response.text
+    row = await _fetch(created.json()["id"])
+    assert row is not None
+    assert row.ended_by_id == me.user_id

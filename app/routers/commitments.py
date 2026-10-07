@@ -105,6 +105,17 @@ INVITE_NOT_PENDING = "invite_not_pending"
 INVITE_EXPIRED = "invite_expired"
 CHALLENGE_CAP_REACHED = "challenge_cap_reached"
 CHALLENGE_ALREADY_ACCEPTED = "challenge_already_accepted"
+CHALLENGE_NOT_ACTIVE = "challenge_not_active"
+
+# Why a challenge that isn't active can't be quit, by what it is instead.
+_NOT_QUITTABLE: dict[CommitmentStatus, str] = {
+    CommitmentStatus.SENT: "This invite hasn't been accepted yet - withdraw it instead",
+    CommitmentStatus.INVITE: "This invite hasn't been accepted yet - decline it instead",
+    CommitmentStatus.EXPIRED: "This invite expired before it was accepted",
+    CommitmentStatus.DECLINED: "This invite was declined",
+    CommitmentStatus.ENDED_EARLY: "This challenge has already been ended",
+    CommitmentStatus.FINISHED: "This challenge has already finished",
+}
 
 
 async def _resolve_challenge_recipient(
@@ -249,19 +260,48 @@ async def get_commitment(
 
 @router.post("/{commitment_id}/end", response_model=CommitmentRead)
 async def end_commitment(
-    commitment: Commitment = Depends(_get_owned_commitment),
+    commitment_id: uuid.UUID,
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
 ) -> CommitmentRead:
     # Ending is a state transition, not an edit - terms (duration_weeks,
     # sessions_per_week, ...) are frozen at creation and stay that way here.
     today = user_today(db_user)
-    if commitment.ended_on is not None or _is_finished(commitment, today):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Commitment has already ended"
-        )
 
+    # Locked so two participants quitting at the same moment can't both land:
+    # the second waits, then finds it already ended.
+    commitment = await session.get(Commitment, commitment_id, with_for_update=True)
+    # A goal has one owner; a challenge has two, and either may end it.
+    # recipient_id is NULL on a goal, so it can never match a caller there.
+    if commitment is None or db_user.id not in (commitment.creator_id, commitment.recipient_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commitment not found")
+
+    if commitment.recipient_id is None:
+        if commitment.ended_on is not None or _is_finished(commitment, today):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Commitment has already ended"
+            )
+    else:
+        # Only a running challenge can be quit. An unanswered invite is
+        # withdrawn or declined instead, and one that's over has nothing left
+        # to end.
+        challenge_status = derive_status(commitment, db_user.id, today)
+        if challenge_status != CommitmentStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": CHALLENGE_NOT_ACTIVE,
+                    "message": _NOT_QUITTABLE[challenge_status],
+                },
+            )
+
+    # The caller's today - whoever takes the action is the one whose calendar
+    # decides the date, same as starts_on at accept.
     commitment.ended_on = today
+    # ended_on says it ended; this says who ended it, which on a challenge is
+    # the difference between "you ended this" and "they did". Redundant on a
+    # goal, but stamped there too so nothing downstream special-cases a NULL.
+    commitment.ended_by_id = db_user.id
     session.add(commitment)
     await session.commit()
     await session.refresh(commitment)
