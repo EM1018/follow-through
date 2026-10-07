@@ -18,7 +18,14 @@ from app.schemas.commitment import (
     CommitmentsListResponse,
     ProgressRead,
 )
-from app.services.commitments import blocks_new_challenge, compute_progress
+from app.services.commitments import (
+    CHALLENGE_CAP,
+    CommitmentStatus,
+    blocks_new_challenge,
+    compute_progress,
+    derive_status,
+    is_live_pending,
+)
 from app.services.dates import user_today
 
 router = APIRouter(prefix="/commitments", tags=["commitments"])
@@ -93,6 +100,11 @@ async def _get_owned_commitment(
 # 409s, and so is an ended commitment, so the status alone can't tell them apart.
 USERNAME_REQUIRED = "username_required"
 DUPLICATE_CHALLENGE = "duplicate_challenge"
+INVITE_UNAVAILABLE = "invite_unavailable"
+INVITE_NOT_PENDING = "invite_not_pending"
+INVITE_EXPIRED = "invite_expired"
+CHALLENGE_CAP_REACHED = "challenge_cap_reached"
+CHALLENGE_ALREADY_ACCEPTED = "challenge_already_accepted"
 
 
 async def _resolve_challenge_recipient(
@@ -256,11 +268,159 @@ async def end_commitment(
     return await _build_read(session, commitment, today)
 
 
+async def _count_running_challenges(session: AsyncSession, user_id: uuid.UUID, today: date) -> int:
+    """Accepted challenges `user_id` is in, on either side, that are still
+    going. Goals never match - they have no invite_status.
+
+    SQL narrows to accepted rows nobody quit; whether one has run past its end
+    date depends on today, so that last part is derive_status()'s call, the
+    same as everywhere else that asks "is this active".
+    """
+    result = await session.exec(
+        select(Commitment).where(
+            or_(Commitment.creator_id == user_id, Commitment.recipient_id == user_id),
+            Commitment.invite_status == InviteStatus.ACCEPTED,
+            Commitment.ended_on.is_(None),
+        )
+    )
+    return sum(
+        1
+        for commitment in result
+        if derive_status(commitment, user_id, today) == CommitmentStatus.ACTIVE
+    )
+
+
+async def _lock_pending_invite_for_recipient(
+    session: AsyncSession, commitment_id: uuid.UUID, user_id: uuid.UUID
+) -> Commitment:
+    """The two guards every recipient-side answer starts with: the caller is
+    the recipient, and the invite hasn't been answered yet.
+
+    FOR UPDATE makes a simultaneous accept/decline/withdraw of the same row
+    wait for this one and then see what it did. The lock is held until the
+    caller commits, so the read and the write that follows are one
+    transaction.
+    """
+    commitment = await session.get(Commitment, commitment_id, with_for_update=True)
+    # 404, not 403, for the creator and for strangers alike - a 403 would
+    # confirm the id exists. The same answer covers a recipient whose invite
+    # was withdrawn a moment ago: the row is gone, so "never existed" and
+    # "withdrawn" can't be told apart here, and the wording is the one thing
+    # true of both. The code lets the client say so and refetch.
+    if commitment is None or commitment.recipient_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": INVITE_UNAVAILABLE,
+                "message": "This invite is no longer available - it may have been withdrawn",
+            },
+        )
+
+    if commitment.invite_status != InviteStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": INVITE_NOT_PENDING,
+                "message": f"This invite has already been {commitment.invite_status}",
+            },
+        )
+
+    return commitment
+
+
+@router.post("/{commitment_id}/accept", response_model=CommitmentRead)
+async def accept_challenge(
+    commitment_id: uuid.UUID,
+    db_user: User = Depends(get_current_db_user),
+    session: AsyncSession = Depends(get_session),
+) -> CommitmentRead:
+    today = user_today(db_user)
+    commitment = await _lock_pending_invite_for_recipient(session, commitment_id, db_user.id)
+
+    if not is_live_pending(commitment, today):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": INVITE_EXPIRED, "message": "This invite has expired"},
+        )
+
+    # The cap is per person, across different invites, so the invite's lock
+    # alone isn't enough: two accepts of two different invites could both
+    # count 4 and both commit. Locking the accepter's own users row lines
+    # those up - the second waits here, then counts with the first included.
+    await session.exec(select(User.id).where(User.id == db_user.id).with_for_update())
+    if await _count_running_challenges(session, db_user.id, today) >= CHALLENGE_CAP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": CHALLENGE_CAP_REACHED,
+                "message": f"You already have {CHALLENGE_CAP} challenges running",
+            },
+        )
+
+    commitment.invite_status = InviteStatus.ACCEPTED
+    # The accepter's today, not the sender's - they're the one acting, and
+    # this one date is what gives both participants the same week boundaries.
+    commitment.starts_on = today
+    session.add(commitment)
+    await session.commit()
+    await session.refresh(commitment)
+    return await _build_read(session, commitment, today)
+
+
+@router.post("/{commitment_id}/decline", response_model=CommitmentRead)
+async def decline_challenge(
+    commitment_id: uuid.UUID,
+    db_user: User = Depends(get_current_db_user),
+    session: AsyncSession = Depends(get_session),
+) -> CommitmentRead:
+    today = user_today(db_user)
+    commitment = await _lock_pending_invite_for_recipient(session, commitment_id, db_user.id)
+
+    # Neither of accept's other two guards applies. The cap is never read:
+    # declining is how someone at the limit gets back under it. And an expired
+    # invite can still be declined - it just becomes declined instead of lapsing.
+    #
+    # The row stays. There's no push system, so the declined card on the
+    # sender's side is how they find out; they clear it themselves (dismiss).
+    commitment.invite_status = InviteStatus.DECLINED
+    session.add(commitment)
+    await session.commit()
+    await session.refresh(commitment)
+    # Never started, so there are no completions that could count toward it.
+    return _read_commitment(commitment, [], today)
+
+
 @router.delete("/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_commitment(
-    commitment: Commitment = Depends(_get_owned_commitment),
+    commitment_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
+    """One verb, three meanings, told apart by the row's state: deleting a
+    goal, withdrawing an invite nobody has answered, and dismissing the
+    declined or expired card left behind by one that went nowhere.
+
+    Creator-only in every case. The recipient has no card of their own to
+    clear - one row holds both sides - so for them this is a 404.
+    """
+    # Locked for the same reason the recipient's side locks it: a withdraw
+    # racing an accept has to wait and then see who won.
+    commitment = await session.get(Commitment, commitment_id, with_for_update=True)
+    if commitment is None or commitment.creator_id != current_user.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commitment not found")
+
+    # Pending (live or expired) and declined both fall through to the delete.
+    # Accepted never does, running or not: from accept on the row belongs to
+    # two people, and you quit a challenge, you don't delete it.
+    if commitment.invite_status == InviteStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": CHALLENGE_ALREADY_ACCEPTED,
+                "message": "This challenge has already been accepted and can't be deleted",
+            },
+        )
+
     # No FK from completions to commitments, by design - a completion is a
     # fact about the user, not a child of a goal, so this never touches
     # tests/other tables and needs no cascading cleanup of its own.

@@ -1683,6 +1683,7 @@
     },
     "/commitments/{commitment_id}": {
       "delete": {
+        "description": "One verb, three meanings, told apart by the row's state: deleting a\ngoal, withdrawing an invite nobody has answered, and dismissing the\ndeclined or expired card left behind by one that went nowhere.\n\nCreator-only in every case. The recipient has no card of their own to\nclear - one row holds both sides - so for them this is a 404.",
         "operationId": "delete_commitment_commitments__commitment_id__delete",
         "parameters": [
           {
@@ -1763,6 +1764,102 @@
           }
         ],
         "summary": "Get Commitment",
+        "tags": [
+          "commitments"
+        ]
+      }
+    },
+    "/commitments/{commitment_id}/accept": {
+      "post": {
+        "operationId": "accept_challenge_commitments__commitment_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "commitment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Commitment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Challenge",
+        "tags": [
+          "commitments"
+        ]
+      }
+    },
+    "/commitments/{commitment_id}/decline": {
+      "post": {
+        "operationId": "decline_challenge_commitments__commitment_id__decline_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "commitment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Commitment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decline Challenge",
         "tags": [
           "commitments"
         ]

@@ -234,6 +234,11 @@ def is_live_pending(commitment: Commitment, today: date) -> bool:
     return today - commitment.created_at.date() < timedelta(days=INVITE_LIVE_DAYS)
 
 
+# How many challenges one person can have running at once. Checked when an
+# invite is accepted, never when it's sent. Goals have their own separate cap.
+CHALLENGE_CAP = 5
+
+
 class CommitmentStatus(StrEnum):
     GOAL = "goal"
     DECLINED = "declined"
