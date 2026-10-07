@@ -397,7 +397,7 @@ async def test_ending_a_goal_already_finished_by_duration_is_409(
 
     # Force it into "already finished" territory - duration_weeks=1 means the
     # single block's last day is starts_on + 6; back-date starts_on so that's
-    # already in the past, the same way _is_finished checks it.
+    # already in the past, the same way derive_status checks it.
     commitment = await session.get(Commitment, uuid.UUID(commitment_id))
     commitment.starts_on = commitment.starts_on - timedelta(days=30)
     session.add(commitment)

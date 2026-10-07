@@ -240,7 +240,6 @@ CHALLENGE_CAP = 5
 
 
 class CommitmentStatus(StrEnum):
-    GOAL = "goal"
     DECLINED = "declined"
     SENT = "sent"
     INVITE = "invite"
@@ -259,10 +258,13 @@ def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> 
     Clock-blind, like compute_progress(): `today` is computed once per request
     by the caller and handed to both, so status and progress can never land on
     different dates either side of midnight within a single response.
-    """
-    if commitment.invite_status is None:
-        return CommitmentStatus.GOAL
 
+    Goals and challenges share the ladder and the vocabulary. There is no
+    "goal" status - what makes a row a goal is recipient_id being NULL, not
+    what this returns. The declined and pending rungs compare invite_status
+    against a specific value, so a goal's NULL matches neither and falls
+    through to the rungs both row types share.
+    """
     if commitment.invite_status == InviteStatus.DECLINED:
         return CommitmentStatus.DECLINED
 
@@ -276,17 +278,22 @@ def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> 
             return CommitmentStatus.SENT
         return CommitmentStatus.INVITE
 
-    # Only accepted challenges get this far, and one without both terms is an
-    # impossible row: Ongoing is rejected at send, and accept stamps starts_on
-    # in the same transaction that sets the status. Answering "active" would
-    # be a challenge that never finishes and never leaves anyone's list with
-    # nothing reporting a problem - raising points at the write path that let
-    # the row through instead. Pending rows legitimately have no starts_on,
-    # which is why this sits below their rung and not above it.
-    if commitment.starts_on is None:
-        raise ValueError(f"accepted challenge {commitment.id} has no starts_on")
-    if commitment.duration_weeks is None:
-        raise ValueError(f"accepted challenge {commitment.id} has no duration_weeks")
+    # Goals and accepted challenges get this far. An accepted challenge
+    # without both terms is an impossible row: Ongoing is rejected at send,
+    # and accept stamps starts_on in the same transaction that sets the
+    # status. Answering "active" would be a challenge that never finishes and
+    # never leaves anyone's list with nothing reporting a problem - raising
+    # points at the write path that let the row through instead. Pending rows
+    # legitimately have no starts_on, which is why this sits below their rung
+    # and not above it.
+    #
+    # Gated on the row being a challenge, not on the field being absent: an
+    # Ongoing goal has no duration_weeks either, and that's a legitimate shape.
+    if commitment.recipient_id is not None:
+        if commitment.starts_on is None:
+            raise ValueError(f"accepted challenge {commitment.id} has no starts_on")
+        if commitment.duration_weeks is None:
+            raise ValueError(f"accepted challenge {commitment.id} has no duration_weeks")
 
     # ended_on before the end-date comparison, always. A quit challenge
     # eventually passes its original end date too - checked the other way
@@ -294,6 +301,12 @@ def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> 
     # went by, and who ended it early would drop out of the UI.
     if commitment.ended_on is not None:
         return CommitmentStatus.ENDED_EARLY
+
+    # Only an Ongoing goal gets here without a duration - it never finishes
+    # on its own, so there's no end date to compare against.
+    if commitment.duration_weeks is None:
+        return CommitmentStatus.ACTIVE
+    assert commitment.starts_on is not None  # goals always have one - ck_commitments_goal_shape
 
     ends_on = commitment.starts_on + timedelta(weeks=commitment.duration_weeks)
     if today >= ends_on:

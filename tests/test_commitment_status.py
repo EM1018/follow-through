@@ -92,8 +92,8 @@ LADDER_CASES = [
         _commitment(invite_status=None, recipient_id=None),
         CREATOR,
         _days_after_created(3),
-        CommitmentStatus.GOAL,
-        id="goal",
+        CommitmentStatus.ACTIVE,
+        id="goal-active",
     ),
     pytest.param(
         _commitment(invite_status=InviteStatus.DECLINED),
@@ -184,7 +184,6 @@ def test_derive_status_ladder(
 
 def test_status_values_are_the_plain_strings() -> None:
     assert [status.value for status in CommitmentStatus] == [
-        "goal",
         "declined",
         "sent",
         "invite",
@@ -214,23 +213,6 @@ def test_ended_early_wins_once_the_original_end_date_has_also_passed() -> None:
     )
 
     assert derive_status(commitment, CREATOR, END_DATE + timedelta(days=30)) == "ended_early"
-
-
-@pytest.mark.parametrize(
-    ("ended_on", "today"),
-    [
-        (None, STARTS_ON),
-        (STARTS_ON + timedelta(days=5), STARTS_ON + timedelta(days=6)),  # ended early
-        (None, END_DATE + timedelta(days=30)),  # past its end date
-        (STARTS_ON + timedelta(days=5), END_DATE + timedelta(days=30)),  # both
-    ],
-)
-def test_null_invite_status_is_goal_regardless_of_other_fields(
-    ended_on: date | None, today: date
-) -> None:
-    commitment = _commitment(invite_status=None, recipient_id=None, ended_on=ended_on)
-
-    assert derive_status(commitment, CREATOR, today) == "goal"
 
 
 @pytest.mark.parametrize(
@@ -293,9 +275,79 @@ def test_accepted_challenge_missing_a_term_raises_even_when_ended_early(
         derive_status(commitment, CREATOR, STARTS_ON + timedelta(days=6))
 
 
-def test_ongoing_goal_without_duration_weeks_does_not_raise() -> None:
-    # Ongoing is a legitimate goal shape - the check above is for challenges
-    # only, and a goal never gets past the first rung to reach it.
-    commitment = _commitment(invite_status=None, recipient_id=None, duration_weeks=None)
+# derive_status - goals
+#
+# A goal has no invite_status and no recipient, and goes down the same ladder
+# as a challenge: the challenge-only rungs never match it, the shared ones do.
 
-    assert derive_status(commitment, CREATOR, STARTS_ON + timedelta(days=400)) == "goal"
+GOAL_ENDED_ON = STARTS_ON + timedelta(days=5)
+
+
+def _goal(*, duration_weeks: int | None = 4, ended_on: date | None = None) -> Commitment:
+    return _commitment(
+        invite_status=None, recipient_id=None, duration_weeks=duration_weeks, ended_on=ended_on
+    )
+
+
+def test_ongoing_goal_is_active_and_does_not_raise() -> None:
+    # Ongoing is a legitimate goal shape - the impossible-row check above is
+    # gated on the row being a challenge, not on duration_weeks being absent.
+    # And with no end date, no amount of time makes it "finished".
+    goal = _goal(duration_weeks=None)
+
+    assert derive_status(goal, CREATOR, STARTS_ON) == "active"
+    assert derive_status(goal, CREATOR, STARTS_ON + timedelta(days=400)) == "active"
+
+
+def test_fixed_length_goal_past_its_end_date_is_finished() -> None:
+    assert derive_status(_goal(), CREATOR, END_DATE + timedelta(days=30)) == "finished"
+
+
+def test_goal_end_date_bound_matches_a_challenges() -> None:
+    # One rule for both row types: active through the last day of the final
+    # week, finished from the day after.
+    goal = _goal()
+
+    assert derive_status(goal, CREATOR, LAST_DAY) == "active"
+    assert derive_status(goal, CREATOR, END_DATE) == "finished"
+
+
+def test_goal_ended_early_is_ended_early() -> None:
+    goal = _goal(ended_on=GOAL_ENDED_ON)
+
+    assert derive_status(goal, CREATOR, GOAL_ENDED_ON + timedelta(days=1)) == "ended_early"
+
+
+def test_ongoing_goal_ended_early_is_ended_early() -> None:
+    goal = _goal(duration_weeks=None, ended_on=GOAL_ENDED_ON)
+
+    assert derive_status(goal, CREATOR, GOAL_ENDED_ON + timedelta(days=400)) == "ended_early"
+
+
+def test_goal_ended_early_stays_ended_early_once_its_end_date_has_also_passed() -> None:
+    # The ordering rung, applying to goals as well: stopping a goal is
+    # permanent, it doesn't turn into "finished" by waiting.
+    goal = _goal(ended_on=GOAL_ENDED_ON)
+
+    assert derive_status(goal, CREATOR, END_DATE + timedelta(days=30)) == "ended_early"
+
+
+def test_goal_not_ended_with_its_end_date_ahead_is_active() -> None:
+    assert derive_status(_goal(), CREATOR, STARTS_ON + timedelta(days=6)) == "active"
+
+
+@pytest.mark.parametrize("duration_weeks", [None, 1, 4, 8])
+@pytest.mark.parametrize("ended_on", [None, STARTS_ON, GOAL_ENDED_ON])
+@pytest.mark.parametrize("viewer_id", [CREATOR, RECIPIENT])
+def test_goal_only_ever_has_a_shared_status(
+    duration_weeks: int | None, ended_on: date | None, viewer_id: uuid.UUID
+) -> None:
+    # Every day from creation to well past the longest possible end date -
+    # including day 14 on, where a pending challenge would read "expired".
+    # "goal" is spelled out too: it isn't a status any more.
+    goal = _goal(duration_weeks=duration_weeks, ended_on=ended_on)
+
+    seen = {derive_status(goal, viewer_id, _days_after_created(day)) for day in range(120)}
+
+    assert seen <= {"active", "finished", "ended_early"}
+    assert seen.isdisjoint({"goal", "sent", "invite", "declined", "expired"})

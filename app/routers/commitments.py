@@ -39,13 +39,6 @@ def _last_block_end(commitment: Commitment) -> date | None:
     return commitment.starts_on + timedelta(days=7 * commitment.duration_weeks - 1)
 
 
-def _is_finished(commitment: Commitment, today: date) -> bool:
-    if commitment.ended_on is not None:
-        return True
-    last_block_end = _last_block_end(commitment)
-    return last_block_end is not None and today > last_block_end
-
-
 def _read_commitment(
     commitment: Commitment, completions: Sequence[Completion], today: date
 ) -> CommitmentRead:
@@ -237,8 +230,15 @@ async def list_commitments(
     )
     commitments = list(result)
 
-    active = [c for c in commitments if not _is_finished(c, today)]
-    finished = [c for c in commitments if _is_finished(c, today)]
+    # Two buckets: still running, or over - whether it ran its course
+    # ("finished") or was stopped ("ended_early").
+    active: list[Commitment] = []
+    finished: list[Commitment] = []
+    for c in commitments:
+        if derive_status(c, db_user.id, today) == CommitmentStatus.ACTIVE:
+            active.append(c)
+        else:
+            finished.append(c)
     active.sort(key=lambda c: c.created_at, reverse=True)
     finished.sort(key=lambda c: c.ended_on or _last_block_end(c) or date.min, reverse=True)
 
@@ -276,24 +276,22 @@ async def end_commitment(
     if commitment is None or db_user.id not in (commitment.creator_id, commitment.recipient_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commitment not found")
 
-    if commitment.recipient_id is None:
-        if commitment.ended_on is not None or _is_finished(commitment, today):
+    # Only something still running can be ended. For a challenge, an
+    # unanswered invite is withdrawn or declined instead, and one that's over
+    # has nothing left to end.
+    current_status = derive_status(commitment, db_user.id, today)
+    if current_status != CommitmentStatus.ACTIVE:
+        if commitment.recipient_id is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="Commitment has already ended"
             )
-    else:
-        # Only a running challenge can be quit. An unanswered invite is
-        # withdrawn or declined instead, and one that's over has nothing left
-        # to end.
-        challenge_status = derive_status(commitment, db_user.id, today)
-        if challenge_status != CommitmentStatus.ACTIVE:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": CHALLENGE_NOT_ACTIVE,
-                    "message": _NOT_QUITTABLE[challenge_status],
-                },
-            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": CHALLENGE_NOT_ACTIVE,
+                "message": _NOT_QUITTABLE[current_status],
+            },
+        )
 
     # The caller's today - whoever takes the action is the one whose calendar
     # decides the date, same as starts_on at accept.
