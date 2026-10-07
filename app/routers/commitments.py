@@ -21,6 +21,7 @@ from app.schemas.commitment import (
 from app.services.commitments import (
     CHALLENGE_CAP,
     CommitmentStatus,
+    Progress,
     blocks_new_challenge,
     compute_progress,
     derive_status,
@@ -39,10 +40,42 @@ def _last_block_end(commitment: Commitment) -> date | None:
     return commitment.starts_on + timedelta(days=7 * commitment.duration_weeks - 1)
 
 
+def _finished_on(commitment: Commitment) -> date:
+    """When a commitment that's over stopped, for sorting the finished list."""
+    if commitment.ended_on is not None:
+        return commitment.ended_on
+    if commitment.starts_on is None:
+        # An invite that was never accepted has no clock to have run out - all
+        # there is to place it by is when it was sent.
+        return commitment.created_at.date()
+    return _last_block_end(commitment) or date.min
+
+
 def _read_commitment(
     commitment: Commitment, completions: Sequence[Completion], today: date
 ) -> CommitmentRead:
-    progress = compute_progress(commitment, completions, today)
+    return _to_read(commitment, compute_progress(commitment, completions, today))
+
+
+def _read_challenge_terms(commitment: Commitment) -> CommitmentRead:
+    """A challenge as the list read returns it for now: its terms and where
+    its invite stands, with progress left empty rather than computed.
+
+    Empty, not compute_progress() over no completions - that would walk the
+    blocks and report every elapsed week as missed, which is a claim about
+    someone's training rather than the absence of one.
+    """
+    not_computed = Progress(
+        blocks=[],
+        current_streak=0,
+        longest_streak=0,
+        weeks_passed=0,
+        weeks_total=commitment.duration_weeks or 0,
+    )
+    return _to_read(commitment, not_computed)
+
+
+def _to_read(commitment: Commitment, progress: Progress) -> CommitmentRead:
     return CommitmentRead(
         id=commitment.id,
         creator_id=commitment.creator_id,
@@ -64,6 +97,12 @@ def _read_commitment(
 
 
 async def _build_read(session: AsyncSession, commitment: Commitment, today: date) -> CommitmentRead:
+    if commitment.starts_on is None:
+        # A challenge nobody has accepted yet. Its clock hasn't started, so
+        # no completion can count toward it and there's no window to query -
+        # and SQL can't order-compare a date against NULL anyway.
+        return _read_commitment(commitment, [], today)
+
     # completion_satisfies (inside compute_progress) already checks activity -
     # no need to filter by it here too, just bound the date window a goal's
     # own blocks could possibly draw from.
@@ -109,6 +148,16 @@ _NOT_QUITTABLE: dict[CommitmentStatus, str] = {
     CommitmentStatus.ENDED_EARLY: "This challenge has already been ended",
     CommitmentStatus.FINISHED: "This challenge has already finished",
 }
+
+
+# An invite that went nowhere is the sender's to see and nobody else's. With
+# no push system that card is how they find out what happened to it; the
+# recipient already answered or let it lapse, and has nothing left to do.
+_SENDER_ONLY = frozenset({CommitmentStatus.DECLINED, CommitmentStatus.EXPIRED})
+
+# What the list read's `active` bucket holds: anything still running or still
+# waiting on an answer. Everything else is over and goes in `finished`.
+_STILL_OPEN = frozenset({CommitmentStatus.ACTIVE, CommitmentStatus.SENT, CommitmentStatus.INVITE})
 
 
 async def _resolve_challenge_recipient(
@@ -223,28 +272,47 @@ async def list_commitments(
 ) -> CommitmentsListResponse:
     today = user_today(db_user)
     result = await session.exec(
+        # Everything the caller takes part in. A goal has no recipient, so
+        # only the first clause can ever match one - goals stay creator-only.
         select(Commitment).where(
-            Commitment.creator_id == db_user.id,
-            Commitment.recipient_id.is_(None),  # goals only - Stage 2 scope
+            or_(Commitment.creator_id == db_user.id, Commitment.recipient_id == db_user.id)
         )
     )
     commitments = list(result)
 
-    # Two buckets: still running, or over - whether it ran its course
-    # ("finished") or was stopped ("ended_early").
+    # The query answers "may I see this row at all" - participation, the same
+    # for both sides. Whether it belongs in the caller's list right now is a
+    # second question with a different answer per side, and it's decided
+    # here rather than in SQL because it turns on expiry: derive_status() gets
+    # that from is_live_pending(), the one copy of the 14-day rule that accept
+    # and send also go by. A WHERE clause would be a second copy, and if the
+    # two drifted an expired invite could drop out of both lists while still
+    # blocking a new send. The cost is fetching a few rows to discard them.
     active: list[Commitment] = []
     finished: list[Commitment] = []
     for c in commitments:
-        if derive_status(c, db_user.id, today) == CommitmentStatus.ACTIVE:
+        c_status = derive_status(c, db_user.id, today)
+        if c_status in _SENDER_ONLY and c.creator_id != db_user.id:
+            continue
+        if c_status in _STILL_OPEN:
             active.append(c)
         else:
             finished.append(c)
-    active.sort(key=lambda c: c.created_at, reverse=True)
-    finished.sort(key=lambda c: c.ended_on or _last_block_end(c) or date.min, reverse=True)
+    # Unanswered invites first, then newest first within each group - a
+    # received invite is waiting on the caller and shouldn't sit below rows
+    # that aren't. Anything pending that made it into this bucket is live:
+    # an expired one went to `finished` above, or was dropped.
+    active.sort(key=lambda c: (c.invite_status == InviteStatus.PENDING, c.created_at), reverse=True)
+    finished.sort(key=_finished_on, reverse=True)
+
+    async def read(commitment: Commitment) -> CommitmentRead:
+        if commitment.recipient_id is not None:
+            return _read_challenge_terms(commitment)
+        return await _build_read(session, commitment, today)
 
     return CommitmentsListResponse(
-        active=[await _build_read(session, c, today) for c in active],
-        finished=[await _build_read(session, c, today) for c in finished],
+        active=[await read(c) for c in active],
+        finished=[await read(c) for c in finished],
     )
 
 

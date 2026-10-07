@@ -829,3 +829,204 @@ async def test_a_goal_ended_early_records_its_owner_as_ended_by(
     row = await _fetch(created.json()["id"])
     assert row is not None
     assert row.ended_by_id == me.user_id
+
+
+# list read - who sees a challenge, and in which bucket
+
+
+async def _bucket(invite: Invite, viewer: CurrentUser) -> str | None:
+    """Which bucket of `viewer`'s list the invite under test is in - None if
+    it isn't in their list at all. Leaves `viewer` as the acting user.
+    """
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    found = [
+        bucket
+        for bucket in ("active", "finished")
+        for item in response.json()[bucket]
+        if item["id"] == invite.id
+    ]
+    assert len(found) <= 1, f"listed more than once: {found}"
+    return found[0] if found else None
+
+
+async def _active_ids(invite: Invite, viewer: CurrentUser) -> list[str]:
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    return [item["id"] for item in response.json()["active"]]
+
+
+async def test_creator_sees_a_challenge_they_sent(invite: Invite) -> None:
+    assert await _bucket(invite, invite.sender) == "active"
+
+
+async def test_recipient_sees_a_challenge_sent_to_them(invite: Invite) -> None:
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+async def test_non_participant_sees_neither_side_of_a_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    stranger = await _make_user(session)
+
+    assert await _bucket(invite, stranger) is None
+    response = await invite.client.get("/commitments")
+    assert response.json() == {"active": [], "finished": []}
+
+
+async def test_a_goal_is_still_listed_only_for_its_owner(invite: Invite) -> None:
+    # Widening the scope to recipients must not leak goals: a goal has no
+    # recipient, so nobody but its creator can match it.
+    created = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert created.status_code == 201, created.text
+    goal_id = created.json()["id"]
+
+    assert goal_id in await _active_ids(invite, invite.sender)
+    assert goal_id not in await _active_ids(invite, invite.recipient)
+
+
+async def test_a_listed_goal_still_has_its_progress_and_a_challenge_has_none(
+    invite: Invite,
+) -> None:
+    created = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert created.status_code == 201, created.text
+    await _accept(invite)
+    _switch_user(invite.sender)
+
+    response = await invite.client.get("/commitments")
+
+    by_id = {item["id"]: item for item in response.json()["active"]}
+    assert len(by_id[created.json()["id"]]["progress"]["blocks"]) == 1
+    # Terms only for now - not computed, rather than computed as all-missed.
+    assert by_id[invite.id]["progress"] == {
+        "blocks": [],
+        "current_streak": 0,
+        "longest_streak": 0,
+        "weeks_passed": 0,
+        "weeks_total": 4,
+    }
+
+
+async def test_a_live_pending_challenge_is_active_for_both(invite: Invite) -> None:
+    assert await _bucket(invite, invite.sender) == "active"
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+async def test_a_declined_challenge_is_listed_for_the_creator_only(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+    assert response.status_code == 200, response.text
+
+    # The sender's card is how they find out; the recipient is done with it.
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_an_expired_challenge_is_listed_for_the_creator_only(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _expire(session, invite.id)
+
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_an_active_challenge_is_active_for_both(invite: Invite) -> None:
+    await _accept(invite)
+
+    assert await _bucket(invite, invite.sender) == "active"
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+@pytest.mark.parametrize("quitter", ["sender", "recipient"])
+async def test_an_ended_early_challenge_is_finished_for_both(invite: Invite, quitter: str) -> None:
+    await _accept(invite)
+    _switch_user(getattr(invite, quitter))
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert response.status_code == 200, response.text
+
+    # Whoever quit, it stays in both lists - unlike a decline.
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) == "finished"
+
+
+async def test_a_challenge_that_ran_its_course_is_finished_for_both(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(weeks=4))
+
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) == "finished"
+
+
+async def test_crossing_the_expiry_boundary_drops_it_from_the_recipient_only(
+    invite: Invite,
+) -> None:
+    # The row never changes - only the clock does. Day 13 is the last live
+    # day; on day 14 it's the sender's expired card and nothing to the
+    # recipient.
+    row = await _fetch(invite.id)
+    assert row is not None
+
+    with patch.object(
+        dates, "_now", return_value=row.created_at + timedelta(days=INVITE_LIVE_DAYS - 1)
+    ):
+        assert await _bucket(invite, invite.sender) == "active"
+        assert await _bucket(invite, invite.recipient) == "active"
+
+    with patch.object(
+        dates, "_now", return_value=row.created_at + timedelta(days=INVITE_LIVE_DAYS)
+    ):
+        assert await _bucket(invite, invite.sender) == "finished"
+        assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_a_received_invite_sorts_above_newer_active_rows(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # Both made after the invite, so newest-first alone would put them on top.
+    await _insert_challenge(
+        session,
+        creator_id=invite.sender.user_id,
+        recipient_id=invite.recipient.user_id,
+        activity="swimming",
+    )
+    _switch_user(invite.recipient)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    ids = await _active_ids(invite, invite.recipient)
+
+    assert len(ids) == 3
+    assert ids[0] == invite.id
+
+
+async def test_a_sent_invite_sorts_above_newer_active_rows(invite: Invite) -> None:
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    assert await _active_ids(invite, invite.sender) == [invite.id, goal.json()["id"]]
+
+
+# single read
+
+
+async def test_creator_can_read_a_pending_invite_by_id(invite: Invite) -> None:
+    # No starts_on until it's accepted - the completions lookup must not try
+    # to bound a date window by a NULL.
+    response = await invite.client.get(f"/commitments/{invite.id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["starts_on"] is None
+    assert response.json()["progress"]["blocks"] == []
