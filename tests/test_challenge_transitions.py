@@ -1,6 +1,7 @@
 import asyncio
+import contextlib
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import Header
 from httpx import AsyncClient, Response
+from sqlalchemy import event
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -33,6 +35,7 @@ from app.services.commitments import (
     CommitmentStatus,
     derive_status,
 )
+from tests.conftest import test_engine
 from tests.conftest import test_session_maker as session_maker
 
 SENDER_USERNAME = "sender_one"
@@ -889,21 +892,19 @@ async def test_a_goal_is_still_listed_only_for_its_owner(invite: Invite) -> None
     assert goal_id not in await _active_ids(invite, invite.recipient)
 
 
-async def test_a_listed_goal_still_has_its_progress_and_a_challenge_has_none(
+async def test_a_listed_goal_has_its_progress_and_an_unaccepted_challenge_has_none(
     invite: Invite,
 ) -> None:
     created = await invite.client.post(
         "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
     )
     assert created.status_code == 201, created.text
-    await _accept(invite)
-    _switch_user(invite.sender)
 
     response = await invite.client.get("/commitments")
 
     by_id = {item["id"]: item for item in response.json()["active"]}
     assert len(by_id[created.json()["id"]]["progress"]["blocks"]) == 1
-    # Terms only for now - not computed, rather than computed as all-missed.
+    # Its clock hasn't started, so there is nothing to compute.
     assert by_id[invite.id]["progress"] == {
         "blocks": [],
         "current_streak": 0,
@@ -1017,6 +1018,213 @@ async def test_a_sent_invite_sorts_above_newer_active_rows(invite: Invite) -> No
     assert goal.status_code == 201, goal.text
 
     assert await _active_ids(invite, invite.sender) == [invite.id, goal.json()["id"]]
+
+
+# list read - progress and the completions fetch
+
+
+@contextlib.contextmanager
+def _statements() -> Iterator[list[tuple[str, Any]]]:
+    """Every SQL statement sent during the `with` block, with its parameters."""
+    seen: list[tuple[str, Any]] = []
+
+    def _on_execute(_conn, _cursor, statement, parameters, _context, _executemany) -> None:
+        seen.append((statement, parameters))
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", _on_execute)
+    try:
+        yield seen
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", _on_execute)
+
+
+def _reading(statements: list[tuple[str, Any]], table: str) -> list[Any]:
+    """Parameters of each statement that selected from `table`."""
+    return [parameters for statement, parameters in statements if f"FROM {table}" in statement]
+
+
+async def _log(
+    session: AsyncSession, user: CurrentUser, *days_ago: int, activity: str = "running"
+) -> None:
+    for days in days_ago:
+        session.add(
+            Completion(
+                user_id=user.user_id,
+                activity=activity,
+                on_date=_today() - timedelta(days=days),
+                source="standalone",
+                label="Test",
+            )
+        )
+    await session.commit()
+
+
+async def _listed(invite: Invite, viewer: CurrentUser) -> dict[str, Any]:
+    """The invite under test as it appears in `viewer`'s list."""
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return next(item for item in body["active"] + body["finished"] if item["id"] == invite.id)
+
+
+async def _start_ten_days_ago(invite: Invite, session: AsyncSession) -> None:
+    """Accepted, with week 1 behind it and week 2 open: days-ago 10 to 4 are
+    week 1, 3 to today are week 2.
+    """
+    await _accept(invite)
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(days=10))
+
+
+async def test_each_participant_is_listed_their_own_track(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 10, 9, 8, 2)
+    await _log(session, invite.recipient, 3)
+
+    as_sender = (await _listed(invite, invite.sender))["progress"]
+    as_recipient = (await _listed(invite, invite.recipient))["progress"]
+
+    assert [block["sessions_done"] for block in as_sender["blocks"]] == [3, 1]
+    assert [block["status"] for block in as_sender["blocks"]] == ["passed", "in_progress"]
+    assert [block["sessions_done"] for block in as_recipient["blocks"]] == [0, 1]
+    assert [block["status"] for block in as_recipient["blocks"]] == ["missed", "in_progress"]
+
+    def bounds(progress: dict[str, Any]) -> list[tuple[str, str]]:
+        return [(block["starts_on"], block["ends_on"]) for block in progress["blocks"]]
+
+    # One starts_on, one set of weeks - whoever is asking.
+    assert bounds(as_sender) == bounds(as_recipient)
+    assert as_sender["weeks_total"] == as_recipient["weeks_total"] == 4
+
+
+async def test_another_activity_does_not_count_toward_a_listed_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 9, 8, activity="cycling")
+
+    progress = (await _listed(invite, invite.sender))["progress"]
+
+    assert [block["sessions_done"] for block in progress["blocks"]] == [0, 0]
+
+
+async def test_a_goal_does_not_count_completions_fetched_for_an_older_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # Same person, same activity, so the goal and the challenge draw on the
+    # same slice of the one fetch - and the challenge's window reaches back
+    # ten days before the goal began.
+    await _start_ten_days_ago(invite, session)
+    _switch_user(invite.sender)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "running", "sessions_per_week": 3, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+    await _log(session, invite.sender, 9, 8, 0)
+
+    response = await invite.client.get("/commitments")
+
+    by_id = {item["id"]: item for item in response.json()["active"]}
+    challenge_blocks = by_id[invite.id]["progress"]["blocks"]
+    goal_blocks = by_id[goal.json()["id"]]["progress"]["blocks"]
+    assert [block["sessions_done"] for block in challenge_blocks] == [2, 1]
+    assert [block["sessions_done"] for block in goal_blocks] == [1]
+
+
+async def test_list_query_count_does_not_grow_with_the_number_of_commitments(
+    invite: Invite, session: AsyncSession
+) -> None:
+    async def goal(activity: str) -> None:
+        response = await invite.client.post(
+            "/commitments", json={"activity": activity, "sessions_per_week": 2, "duration_weeks": 4}
+        )
+        assert response.status_code == 201, response.text
+
+    await _accept(invite)
+    _switch_user(invite.sender)
+    await goal("running")
+    await _log(session, invite.sender, 0)
+    await _log(session, invite.recipient, 0)
+
+    with _statements() as one_of_each:
+        small = await invite.client.get("/commitments")
+    assert len(small.json()["active"]) == 2
+
+    for activity in ("walking", "cycling", "swimming", "cardio"):
+        await _insert_challenge(
+            session,
+            creator_id=invite.sender.user_id,
+            recipient_id=invite.recipient.user_id,
+            activity=activity,
+        )
+        await goal(activity)
+        await _log(session, invite.sender, 0, activity=activity)
+        await _log(session, invite.recipient, 0, activity=activity)
+
+    with _statements() as five_of_each:
+        large = await invite.client.get("/commitments")
+    assert len(large.json()["active"]) == 10
+
+    # One query for the list and one for every completion it needs, whatever
+    # its size - not one per goal and two per challenge.
+    assert len(_reading(five_of_each, "commitments")) == 1
+    assert len(_reading(five_of_each, "completions")) == 1
+    assert len(five_of_each) == len(one_of_each)
+
+
+@pytest.mark.parametrize("state", ["pending", "declined", "expired"])
+async def test_a_never_started_challenge_has_no_progress_and_fetches_no_completions(
+    invite: Invite, session: AsyncSession, state: str
+) -> None:
+    if state == "declined":
+        _switch_user(invite.recipient)
+        declined = await invite.client.post(f"/commitments/{invite.id}/decline")
+        assert declined.status_code == 200, declined.text
+    elif state == "expired":
+        await _expire(session, invite.id)
+    # Would count if anything looked - it's the right activity, logged today.
+    await _log(session, invite.sender, 0)
+
+    with _statements() as statements:
+        listed = await _listed(invite, invite.sender)
+
+    assert listed["starts_on"] is None
+    assert listed["progress"] == {
+        "blocks": [],
+        "current_streak": 0,
+        "longest_streak": 0,
+        "weeks_passed": 0,
+        "weeks_total": 4,
+    }
+    # Nothing in the list has a clock running, so there's nothing to fetch.
+    assert _reading(statements, "completions") == []
+
+
+async def test_a_never_started_challenge_adds_nothing_to_the_completions_query(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # The recipient has one goal of their own, begun today, next to an invite
+    # sent a week ago that they haven't answered.
+    await _update_commitment(session, invite.id, created_at=datetime.now(UTC) - timedelta(days=7))
+    _switch_user(invite.recipient)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "running", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    with _statements() as statements:
+        response = await invite.client.get("/commitments")
+    assert len(response.json()["active"]) == 2
+
+    [parameters] = _reading(statements, "completions")
+    flat = list(parameters)
+    # Only the goal's owner, and only the goal's dates: the sender's id and
+    # the week the invite has been waiting are both absent.
+    assert invite.recipient.user_id in flat
+    assert invite.sender.user_id not in flat
+    assert [value for value in flat if isinstance(value, date)] == [_today(), _today()]
 
 
 # single read

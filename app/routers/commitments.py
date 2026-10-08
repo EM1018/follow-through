@@ -1,4 +1,5 @@
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date, timedelta
 
@@ -23,6 +24,7 @@ from app.services.commitments import (
     CommitmentStatus,
     Progress,
     blocks_new_challenge,
+    compute_challenge_progress,
     compute_progress,
     derive_status,
     is_live_pending,
@@ -58,12 +60,12 @@ def _read_commitment(
 
 
 def _read_challenge_terms(commitment: Commitment) -> CommitmentRead:
-    """A challenge as the list read returns it for now: its terms and where
-    its invite stands, with progress left empty rather than computed.
+    """A challenge whose clock never started - pending, declined, or expired
+    - as the list read returns it: its terms and where its invite stands.
 
-    Empty, not compute_progress() over no completions - that would walk the
-    blocks and report every elapsed week as missed, which is a claim about
-    someone's training rather than the absence of one.
+    Nothing is computed for one. The response shape still requires a progress
+    object, so it gets an empty one built here, not one asked of the
+    progress functions.
     """
     not_computed = Progress(
         blocks=[],
@@ -114,6 +116,75 @@ async def _build_read(session: AsyncSession, commitment: Commitment, today: date
         )
     )
     return _read_commitment(commitment, list(result), today)
+
+
+# One participant's completions for one activity - the slice of a list read's
+# single completions fetch that a commitment's progress is computed from.
+CompletionsByOwner = dict[tuple[uuid.UUID, str], list[Completion]]
+
+
+async def _fetch_completions(
+    session: AsyncSession, commitments: Sequence[Commitment], today: date
+) -> CompletionsByOwner:
+    """Every completion any of `commitments` could count, in one query,
+    bucketed by (user_id, activity) so each takes its own slice without
+    another round trip or a re-scan.
+
+    One query however many commitments there are - fetching per row would be
+    a query per goal and two per challenge. It can be pulled apart from the
+    matching because compute_progress() is pure: it takes completions and
+    never asks the database for more.
+
+    Only rows whose clock has started contribute. An invite that was never
+    accepted has no starts_on and no progress, so its participants and dates
+    would only widen the query for nothing.
+
+    This reads other users' completions: a challenge needs both sides. What
+    entitles the caller to them is being a participant, which the query that
+    produced `commitments` established - nothing here checks it again. The
+    full rows come back, notes and amounts included, and must go no further
+    than compute_progress().
+    """
+    user_ids: set[uuid.UUID] = set()
+    activities: set[str] = set()
+    earliest: date | None = None
+    latest: date | None = None
+    for commitment in commitments:
+        if commitment.starts_on is None:
+            continue
+        user_ids.add(commitment.creator_id)
+        if commitment.recipient_id is not None:
+            user_ids.add(commitment.recipient_id)
+        activities.add(commitment.activity)
+        # Nothing after today counts, nor after the row stopped - whichever
+        # came first.
+        last_day = min(
+            today,
+            commitment.ended_on or date.max,
+            _last_block_end(commitment) or date.max,
+        )
+        earliest = commitment.starts_on if earliest is None else min(earliest, commitment.starts_on)
+        latest = last_day if latest is None else max(latest, last_day)
+
+    by_owner: CompletionsByOwner = defaultdict(list)
+    if earliest is None or latest is None:
+        return by_owner
+
+    # The window is the union of every row's, so a slice can hold completions
+    # from outside its own commitment's dates. That's fine - compute_progress()
+    # only counts what falls inside a block.
+    result = await session.exec(
+        select(Completion).where(
+            Completion.user_id.in_(user_ids),
+            Completion.activity.in_(activities),
+            Completion.on_date >= earliest,
+            Completion.on_date <= latest,
+        )
+    )
+    for completion in result:
+        assert completion.activity is not None  # filtered on it above
+        by_owner[(completion.user_id, completion.activity)].append(completion)
+    return by_owner
 
 
 async def _get_owned_commitment(
@@ -305,14 +376,35 @@ async def list_commitments(
     active.sort(key=lambda c: (c.invite_status == InviteStatus.PENDING, c.created_at), reverse=True)
     finished.sort(key=_finished_on, reverse=True)
 
-    async def read(commitment: Commitment) -> CommitmentRead:
-        if commitment.recipient_id is not None:
+    completions = await _fetch_completions(session, [*active, *finished], today)
+
+    def read(commitment: Commitment) -> CommitmentRead:
+        if commitment.recipient_id is None:
+            own = completions.get((commitment.creator_id, commitment.activity), [])
+            return _read_commitment(commitment, own, today)
+
+        if commitment.starts_on is None:
             return _read_challenge_terms(commitment)
-        return await _build_read(session, commitment, today)
+
+        other_id = (
+            commitment.recipient_id
+            if commitment.creator_id == db_user.id
+            else commitment.creator_id
+        )
+        tracks = compute_challenge_progress(
+            commitment,
+            completions.get((db_user.id, commitment.activity), []),
+            completions.get((other_id, commitment.activity), []),
+            today,
+        )
+        # Both tracks are computed; the response has room for one until it
+        # gets a shape that can hold two, and the caller's own is the one
+        # that can't be mistaken for somebody else's.
+        return _to_read(commitment, tracks.caller)
 
     return CommitmentsListResponse(
-        active=[await read(c) for c in active],
-        finished=[await read(c) for c in finished],
+        active=[read(c) for c in active],
+        finished=[read(c) for c in finished],
     )
 
 

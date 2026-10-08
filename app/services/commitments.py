@@ -108,27 +108,22 @@ def _sessions_done(
     return len(qualifying_days)
 
 
-def compute_progress(
-    commitment: Commitment, completions: Sequence[Completion], today: date
-) -> Progress:
-    """Pure and clock-blind, same shape as resolve() in resolution.py - `today`
-    is always a parameter, never read from a clock, so a caller-supplied
-    timezone (e.g. a future users.timezone column) only ever changes what gets
-    passed in here, not this function's body.
+@dataclass
+class _Windows:
+    """A commitment's week blocks as of some day: where each one starts and
+    ends, and how many there are in all. Says nothing about who did what in
+    them - the boundaries belong to the commitment, not to a person.
     """
-    starts_on = commitment.starts_on
-    if starts_on is None:
-        # A challenge nobody has accepted yet - its clock starts at accept, so
-        # there are no blocks to walk. Goals never get here
-        # (ck_commitments_goal_shape).
-        return Progress(
-            blocks=[],
-            current_streak=0,
-            longest_streak=0,
-            weeks_passed=0,
-            weeks_total=commitment.duration_weeks or 0,
-        )
 
+    # (starts_on, ends_on) per block, in order; position is the block's index.
+    # Stops at the block containing `today` - weeks not reached yet are left
+    # out rather than listed, which is what keeps "hasn't happened" from
+    # reading as "missed". weeks_total is how a reader knows more are coming.
+    bounds: list[tuple[date, date]]
+    weeks_total: int
+
+
+def _block_windows(commitment: Commitment, starts_on: date, today: date) -> _Windows:
     if commitment.ended_on is not None:
         # Only fully-elapsed blocks (ends_on <= ended_on) survive - one still
         # open when the goal ended is dropped entirely, never stamped missed.
@@ -145,16 +140,27 @@ def compute_progress(
         max_index = current_index
         weeks_total = current_index + 1
 
+    return _Windows(
+        bounds=[_block_bounds(starts_on, index) for index in range(max_index + 1)],
+        weeks_total=weeks_total,
+    )
+
+
+def _track(
+    commitment: Commitment, windows: _Windows, completions: Sequence[Completion], today: date
+) -> Progress:
+    """One person's progress through `windows`: their sessions counted into
+    each block, and the streaks that follow from that.
+    """
     blocks: list[Block] = []
-    for index in range(max_index + 1):
-        block_starts_on, block_ends_on = _block_bounds(starts_on, index)
+    for index, (block_starts_on, block_ends_on) in enumerate(windows.bounds):
         sessions_done = _sessions_done(commitment, completions, block_starts_on, block_ends_on)
 
         # PASSED takes priority regardless of where `today` falls - hitting the
         # target closes a block out early. Otherwise: still open (contains
         # today) is IN_PROGRESS, already elapsed and short is MISSED. Blocks
-        # entirely after today are never constructed at all (max_index caps
-        # the loop), so there is no third, future-dated case to handle here.
+        # entirely after today are never constructed at all (the windows stop
+        # at today), so there is no third, future-dated case to handle here.
         # An ended commitment can never be IN_PROGRESS - every block emitted
         # above already ended on or before ended_on, so there's no more time
         # left for it to still be open.
@@ -208,7 +214,75 @@ def compute_progress(
         current_streak=current_streak,
         longest_streak=longest_streak,
         weeks_passed=weeks_passed,
-        weeks_total=weeks_total,
+        weeks_total=windows.weeks_total,
+    )
+
+
+def compute_progress(
+    commitment: Commitment, completions: Sequence[Completion], today: date
+) -> Progress:
+    """Pure and clock-blind, same shape as resolve() in resolution.py - `today`
+    is always a parameter, never read from a clock, so a caller-supplied
+    timezone (e.g. a future users.timezone column) only ever changes what gets
+    passed in here, not this function's body.
+    """
+    starts_on = commitment.starts_on
+    if starts_on is None:
+        # A challenge nobody has accepted yet - its clock starts at accept, so
+        # there are no blocks to walk. Goals never get here
+        # (ck_commitments_goal_shape).
+        return Progress(
+            blocks=[],
+            current_streak=0,
+            longest_streak=0,
+            weeks_passed=0,
+            weeks_total=commitment.duration_weeks or 0,
+        )
+
+    return _track(commitment, _block_windows(commitment, starts_on, today), completions, today)
+
+
+@dataclass
+class ChallengeProgress:
+    """Both participants' progress through one challenge, over the same week
+    blocks. Named for who is looking, since the two sides are told apart by
+    viewer everywhere else a challenge is read (see derive_status()).
+    """
+
+    caller: Progress
+    other: Progress
+
+
+def compute_challenge_progress(
+    commitment: Commitment,
+    caller_completions: Sequence[Completion],
+    other_completions: Sequence[Completion],
+    today: date,
+) -> ChallengeProgress:
+    """Two tracks over one set of boundaries.
+
+    The blocks are worked out once, from the challenge's single starts_on,
+    and both people are matched against that same list - never a set of
+    boundaries each. Week 2 has to be the same seven days for both or there
+    is nothing to compare, and it's also why a quit drops the same partial
+    week from both sides.
+
+    `today` is the caller's, for both tracks. The other participant may be in
+    a different timezone, so their newest day can show up a few hours late;
+    matching each side against its own clock would mean two time references
+    in one comparison, which is the worse trade.
+
+    Only for a challenge whose clock has started. One that was never accepted
+    has no starts_on and so no progress at all - callers branch on that
+    before getting here, rather than asking for an empty result.
+    """
+    if commitment.starts_on is None:
+        raise ValueError(f"challenge {commitment.id} has no starts_on to compute progress from")
+
+    windows = _block_windows(commitment, commitment.starts_on, today)
+    return ChallengeProgress(
+        caller=_track(commitment, windows, caller_completions, today),
+        other=_track(commitment, windows, other_completions, today),
     )
 
 
