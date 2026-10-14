@@ -16,18 +16,14 @@ function commitment(overrides: Partial<CommitmentRead> = {}): CommitmentRead {
   return {
     activity: 'running',
     created_at: '2026-08-10T12:00:00Z',
-    creator_id: 'u1',
     duration_weeks: null,
-    ended_on: null,
     id: 'c1',
-    invite_status: null,
-    progress: { blocks: [], current_streak: 0, longest_streak: 0, weeks_passed: 0, weeks_total: 1 },
-    recipient_id: null,
-    rematch_of_id: null,
     sessions_per_week: 3,
     starts_on: '2026-08-01',
+    status: 'active',
     target_unit: null,
     target_value: null,
+    you: { weeks: [], current_streak: 0, longest_streak: 0, weeks_passed: 0, weeks_total: 1 },
     ...overrides,
   };
 }

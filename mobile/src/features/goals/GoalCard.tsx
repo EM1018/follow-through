@@ -6,6 +6,7 @@ import { colors, fontSize, fontWeight, heroFontSize, segmentBar, spacing } from 
 import { circlesFor } from './circles';
 import type { CommitmentRead } from './commitments';
 import { GoalCircles } from './GoalCircles';
+import { goalTrack } from './goalShape';
 import { finishedWeekLabel, goalTermsLine, streakLabel } from './goalTerms';
 
 type GoalCardProps = {
@@ -24,12 +25,14 @@ type GoalCardProps = {
  * either way, since it never shows a hero number to begin with.
  */
 export function GoalCard({ commitment, variant, activityDisplayName, expanded, onPress }: GoalCardProps) {
-  const { progress } = commitment;
-  // The last returned block is always "this week" for an active goal -- only
-  // the most recent block can ever be in_progress, everything before it is
+  const track = goalTrack(commitment);
+  // The last returned week is always "this week" for an active goal -- only
+  // the most recent week can ever be in_progress, everything before it is
   // necessarily closed.
-  const currentBlock = progress.blocks[progress.blocks.length - 1] ?? null;
-  const circles = circlesFor(progress.blocks, commitment.duration_weeks);
+  const currentWeek = track.weeks[track.weeks.length - 1] ?? null;
+  // Every week of a commitment asks for the same count, so it lives on the row, not the week.
+  const sessionsRequired = commitment.sessions_per_week;
+  const circles = circlesFor(track.weeks, commitment.duration_weeks);
 
   if (!expanded) {
     return (
@@ -43,9 +46,9 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
             {activityDisplayName}
           </Text>
           <GoalCircles statuses={circles} size="mini" />
-          {currentBlock ? (
+          {currentWeek ? (
             <Text style={styles.collapsedCount}>
-              {currentBlock.sessions_done}/{currentBlock.sessions_required}
+              {currentWeek.sessions_done}/{sessionsRequired}
             </Text>
           ) : null}
         </Card>
@@ -67,17 +70,17 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
               <Text style={styles.headerRight}>{goalTermsLine(commitment)}</Text>
             </View>
 
-            {currentBlock ? (
+            {currentWeek ? (
               <>
                 <View style={styles.hero}>
-                  <Text style={styles.heroNumber}>{currentBlock.sessions_done}</Text>
-                  <Text style={styles.heroSuffix}>of {currentBlock.sessions_required} this week</Text>
+                  <Text style={styles.heroNumber}>{currentWeek.sessions_done}</Text>
+                  <Text style={styles.heroSuffix}>of {sessionsRequired} this week</Text>
                 </View>
                 <View style={styles.segmentRow}>
-                  {Array.from({ length: currentBlock.sessions_required }, (_, index) => (
+                  {Array.from({ length: sessionsRequired }, (_, index) => (
                     <View
                       key={index}
-                      style={[styles.segment, index < currentBlock.sessions_done && styles.segmentFilled]}
+                      style={[styles.segment, index < currentWeek.sessions_done && styles.segmentFilled]}
                     />
                   ))}
                 </View>
@@ -86,7 +89,7 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
 
             <View style={styles.divider} />
             <GoalCircles statuses={circles} size="normal" />
-            <Text style={styles.streak}>{streakLabel(progress.current_streak)}</Text>
+            <Text style={styles.streak}>{streakLabel(track.current_streak)}</Text>
           </>
         ) : (
           <>
@@ -99,7 +102,7 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
             <Text style={styles.subtitle}>{goalTermsLine(commitment)}</Text>
             <GoalCircles statuses={circles} size="normal" />
             <View style={styles.divider} />
-            <Text style={styles.streak}>{streakLabel(progress.current_streak)}</Text>
+            <Text style={styles.streak}>{streakLabel(track.current_streak)}</Text>
           </>
         )}
       </Card>

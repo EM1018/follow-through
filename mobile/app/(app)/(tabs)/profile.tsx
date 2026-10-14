@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
-import { useCommitments } from '@/features/goals/commitments';
+import { useGoals } from '@/features/goals/commitments';
 import { useMe } from '@/features/profile/me';
 import { signOut } from '@/features/profile/signOut';
 import { UsernameEditorSheet } from '@/features/profile/UsernameEditorSheet';
@@ -13,7 +13,7 @@ import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 export default function ProfileScreen() {
   const queryClient = useQueryClient();
   const meQuery = useMe();
-  const commitmentsQuery = useCommitments();
+  const commitmentsQuery = useGoals();
   const [usernameSheetOpen, setUsernameSheetOpen] = useState(false);
 
   const username = meQuery.data?.username ?? null;

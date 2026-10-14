@@ -5,7 +5,7 @@ import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
 import { Screen } from '@/components/Screen';
 import { useActivities } from '@/features/logs/activities';
-import { useCommitments, type CommitmentRead } from '@/features/goals/commitments';
+import { useGoals, type CommitmentRead } from '@/features/goals/commitments';
 import { EMPTY_GOALS_SUBTITLE, EMPTY_GOALS_TITLE, NEW_GOAL_BUTTON_LABEL } from '@/features/goals/goalCopy';
 import { GoalCard } from '@/features/goals/GoalCard';
 import { GoalsSkeleton } from '@/features/goals/GoalsSkeleton';
@@ -16,7 +16,7 @@ import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
 import { colors, fontSize, fontWeight, spacing } from '@/theme';
 
 export default function GoalsScreen() {
-  const query = useCommitments();
+  const query = useGoals();
   const activitiesQuery = useActivities();
 
   const hasCache = query.data !== undefined;

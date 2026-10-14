@@ -4,7 +4,7 @@ import { SectionList, StyleSheet, Text, TouchableOpacity, View } from 'react-nat
 
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
-import { useCommitments, type CommitmentRead } from '@/features/goals/commitments';
+import { useGoals, type CommitmentRead } from '@/features/goals/commitments';
 import { GoalActionsSheet } from '@/features/goals/GoalActionsSheet';
 import { goalRowSubtitle, type GoalVariant } from '@/features/goals/manageGoalsCopy';
 import { useActivities } from '@/features/logs/activities';
@@ -56,7 +56,7 @@ function GoalRow({
 }
 
 export default function ManageGoalsScreen() {
-  const commitmentsQuery = useCommitments();
+  const commitmentsQuery = useGoals();
   const activitiesQuery = useActivities();
   const [actionsFor, setActionsFor] = useState<GoalRowData | null>(null);
 

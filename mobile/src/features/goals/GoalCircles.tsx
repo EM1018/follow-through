@@ -2,14 +2,14 @@ import { StyleSheet, View } from 'react-native';
 
 import { circleSize, colors, spacing } from '@/theme';
 
-import type { BlockStatus } from './commitments';
+import type { WeekCircle } from './circles';
 
 /**
- * filled = passed, hollow = missed, outlined accent = in_progress -- same
+ * filled = met, hollow = missed, outlined accent = in_progress -- same
  * filled/hollow language DayStatusIndicator already uses for the schedule,
  * plus a third, accent-outlined state this screen is the first to need.
  */
-export function GoalCircles({ statuses, size = 'normal' }: { statuses: BlockStatus[]; size?: 'normal' | 'mini' }) {
+export function GoalCircles({ statuses, size = 'normal' }: { statuses: WeekCircle[]; size?: 'normal' | 'mini' }) {
   const diameter = size === 'normal' ? circleSize.normal : circleSize.mini;
   return (
     <View style={styles.row}>
@@ -18,7 +18,7 @@ export function GoalCircles({ statuses, size = 'normal' }: { statuses: BlockStat
           key={index}
           style={[
             { width: diameter, height: diameter, borderRadius: diameter / 2 },
-            status === 'passed' && styles.filled,
+            status === 'met' && styles.filled,
             status === 'missed' && styles.hollow,
             status === 'in_progress' && styles.inProgress,
           ]}
