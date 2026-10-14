@@ -2,6 +2,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, func, or_
@@ -15,12 +16,17 @@ from app.models.completion import Completion
 from app.models.user import User
 from app.schemas.commitment import (
     CommitmentCreate,
-    CommitmentRead,
     CommitmentsListResponse,
-    ProgressRead,
+    EndedBy,
+    OrientedCommitmentRead,
+    ThemRead,
+    TrackRead,
+    WeekRead,
 )
+from app.services.activities import Activity, Unit
 from app.services.commitments import (
     CHALLENGE_CAP,
+    BlockStatus,
     CommitmentStatus,
     Progress,
     blocks_new_challenge,
@@ -51,71 +57,6 @@ def _finished_on(commitment: Commitment) -> date:
         # there is to place it by is when it was sent.
         return commitment.created_at.date()
     return _last_block_end(commitment) or date.min
-
-
-def _read_commitment(
-    commitment: Commitment, completions: Sequence[Completion], today: date
-) -> CommitmentRead:
-    return _to_read(commitment, compute_progress(commitment, completions, today))
-
-
-def _read_challenge_terms(commitment: Commitment) -> CommitmentRead:
-    """A challenge whose clock never started - pending, declined, or expired
-    - as the list read returns it: its terms and where its invite stands.
-
-    Nothing is computed for one. The response shape still requires a progress
-    object, so it gets an empty one built here, not one asked of the
-    progress functions.
-    """
-    not_computed = Progress(
-        blocks=[],
-        current_streak=0,
-        longest_streak=0,
-        weeks_passed=0,
-        weeks_total=commitment.duration_weeks or 0,
-    )
-    return _to_read(commitment, not_computed)
-
-
-def _to_read(commitment: Commitment, progress: Progress) -> CommitmentRead:
-    return CommitmentRead(
-        id=commitment.id,
-        creator_id=commitment.creator_id,
-        recipient_id=commitment.recipient_id,
-        activity=commitment.activity,
-        target_value=float(commitment.target_value)
-        if commitment.target_value is not None
-        else None,
-        target_unit=commitment.target_unit,
-        sessions_per_week=commitment.sessions_per_week,
-        duration_weeks=commitment.duration_weeks,
-        starts_on=commitment.starts_on,
-        ended_on=commitment.ended_on,
-        invite_status=commitment.invite_status,
-        rematch_of_id=commitment.rematch_of_id,
-        created_at=commitment.created_at,
-        progress=ProgressRead.model_validate(progress),
-    )
-
-
-async def _build_read(session: AsyncSession, commitment: Commitment, today: date) -> CommitmentRead:
-    if commitment.starts_on is None:
-        # A challenge nobody has accepted yet. Its clock hasn't started, so
-        # no completion can count toward it and there's no window to query -
-        # and SQL can't order-compare a date against NULL anyway.
-        return _read_commitment(commitment, [], today)
-
-    # completion_satisfies (inside compute_progress) already checks activity -
-    # no need to filter by it here too, just bound the date window a goal's
-    # own blocks could possibly draw from.
-    result = await session.exec(
-        select(Completion).where(
-            Completion.user_id == commitment.creator_id,
-            Completion.on_date >= commitment.starts_on,
-            Completion.on_date <= today,
-        )
-    )
-    return _read_commitment(commitment, list(result), today)
 
 
 # One participant's completions for one activity - the slice of a list read's
@@ -185,6 +126,140 @@ async def _fetch_completions(
         assert completion.activity is not None  # filtered on it above
         by_owner[(completion.user_id, completion.activity)].append(completion)
     return by_owner
+
+
+def _track_read(progress: Progress) -> TrackRead:
+    """The whole of what one person's progress becomes on the way out: per
+    week a count and how it stands, plus the totals that follow from those.
+    Block dates are dropped along with everything else - the client has
+    starts_on and the index.
+    """
+    return TrackRead(
+        weeks=[
+            WeekRead(
+                index=block.index,
+                sessions_done=block.sessions_done,
+                met=block.status == BlockStatus.PASSED,
+                in_progress=block.status == BlockStatus.IN_PROGRESS,
+            )
+            for block in progress.blocks
+        ],
+        weeks_total=progress.weeks_total,
+        weeks_passed=progress.weeks_passed,
+        current_streak=progress.current_streak,
+        longest_streak=progress.longest_streak,
+    )
+
+
+def _oriented_read(
+    commitment: Commitment,
+    viewer_id: uuid.UUID,
+    today: date,
+    completions: CompletionsByOwner,
+    usernames: dict[uuid.UUID, str | None],
+) -> OrientedCommitmentRead:
+    """`commitment` as `viewer_id` sees it: themselves as "you", the other
+    participant as "them", whichever of the two created it.
+
+    This is the one place a commitment becomes a response, and the one place
+    completions stop. `completions` holds full rows - for a challenge, the
+    other participant's too - and the only thing taken from them is what
+    _track_read() keeps. Every field of the result is named below; nothing is
+    copied across from the row wholesale.
+
+    A field that doesn't apply is never passed to the model, which is how it
+    comes to be left out of the response instead of sent empty: no starts_on
+    or tracks before the clock starts, no `them` on a goal, no ended_by
+    unless it was ended early.
+    """
+    if viewer_id not in (commitment.creator_id, commitment.recipient_id):
+        raise ValueError(f"{viewer_id} is not a participant in commitment {commitment.id}")
+
+    current_status = derive_status(commitment, viewer_id, today)
+    own = completions.get((viewer_id, commitment.activity), [])
+    applicable: dict[str, Any] = {}
+
+    if commitment.recipient_id is None:
+        # A goal's clock starts when it's created - ck_commitments_goal_shape.
+        applicable["starts_on"] = commitment.starts_on
+        applicable["you"] = _track_read(compute_progress(commitment, own, today))
+    else:
+        other_id = (
+            commitment.recipient_id if commitment.creator_id == viewer_id else commitment.creator_id
+        )
+        if commitment.starts_on is None:
+            applicable["them"] = ThemRead(username=usernames[other_id])
+        else:
+            theirs = completions.get((other_id, commitment.activity), [])
+            tracks = compute_challenge_progress(commitment, own, theirs, today)
+            applicable["starts_on"] = commitment.starts_on
+            applicable["you"] = _track_read(tracks.caller)
+            applicable["them"] = ThemRead(
+                username=usernames[other_id], track=_track_read(tracks.other)
+            )
+
+    if current_status == CommitmentStatus.ENDED_EARLY:
+        # A goal has one person who could have ended it. On a challenge it's
+        # whoever ended_by_id says.
+        ended_by_viewer = commitment.recipient_id is None or commitment.ended_by_id == viewer_id
+        applicable["ended_on"] = commitment.ended_on
+        applicable["ended_by"] = EndedBy.YOU if ended_by_viewer else EndedBy.THEM
+
+    return OrientedCommitmentRead(
+        id=commitment.id,
+        status=current_status,
+        activity=Activity(commitment.activity),
+        target_value=float(commitment.target_value)
+        if commitment.target_value is not None
+        else None,
+        target_unit=Unit(commitment.target_unit) if commitment.target_unit is not None else None,
+        sessions_per_week=commitment.sessions_per_week,
+        duration_weeks=commitment.duration_weeks,
+        created_at=commitment.created_at,
+        **applicable,
+    )
+
+
+async def _fetch_usernames(
+    session: AsyncSession, commitments: Sequence[Commitment], viewer_id: uuid.UUID
+) -> dict[uuid.UUID, str | None]:
+    """The current username of everyone `viewer_id` is in a challenge with,
+    in one query. Looked up on every read, never kept on the commitment, so a
+    rename shows up everywhere at once. The only column fetched is the one
+    that's sent.
+    """
+    other_ids = {
+        commitment.recipient_id if commitment.creator_id == viewer_id else commitment.creator_id
+        for commitment in commitments
+        if commitment.recipient_id is not None
+    }
+    if not other_ids:
+        return {}
+
+    result = await session.exec(select(User.id, User.username).where(User.id.in_(other_ids)))
+    return dict(result.all())
+
+
+async def _read_as(
+    session: AsyncSession, commitments: Sequence[Commitment], viewer_id: uuid.UUID, today: date
+) -> list[OrientedCommitmentRead]:
+    """`commitments` as `viewer_id` sees them, in the order given. Two
+    queries however many there are - their completions, and the names of the
+    people on the other side of any challenges.
+    """
+    completions = await _fetch_completions(session, commitments, today)
+    usernames = await _fetch_usernames(session, commitments, viewer_id)
+    return [
+        _oriented_read(commitment, viewer_id, today, completions, usernames)
+        for commitment in commitments
+    ]
+
+
+async def _read_one_as(
+    session: AsyncSession, commitment: Commitment, viewer_id: uuid.UUID, today: date
+) -> OrientedCommitmentRead:
+    [read] = await _read_as(session, [commitment], viewer_id, today)
+    return read
 
 
 async def _get_owned_commitment(
@@ -302,12 +377,12 @@ async def _resolve_challenge_recipient(
     return recipient
 
 
-@router.post("", response_model=CommitmentRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=OrientedCommitmentRead, status_code=status.HTTP_201_CREATED)
 async def create_commitment(
     body: CommitmentCreate,
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
-) -> CommitmentRead:
+) -> OrientedCommitmentRead:
     today = user_today(db_user)
     recipient = (
         await _resolve_challenge_recipient(session, body, db_user, today)
@@ -330,10 +405,7 @@ async def create_commitment(
     session.add(commitment)
     await session.commit()
     await session.refresh(commitment)
-    # No query for existing completions here - progress starts empty the
-    # moment a commitment is created, by definition (a goal's blocks can't have
-    # begun before starts_on, which is always today; a challenge has none yet).
-    return _read_commitment(commitment, [], today)
+    return await _read_one_as(session, commitment, db_user.id, today)
 
 
 @router.get("", response_model=CommitmentsListResponse)
@@ -376,54 +448,26 @@ async def list_commitments(
     active.sort(key=lambda c: (c.invite_status == InviteStatus.PENDING, c.created_at), reverse=True)
     finished.sort(key=_finished_on, reverse=True)
 
-    completions = await _fetch_completions(session, [*active, *finished], today)
-
-    def read(commitment: Commitment) -> CommitmentRead:
-        if commitment.recipient_id is None:
-            own = completions.get((commitment.creator_id, commitment.activity), [])
-            return _read_commitment(commitment, own, today)
-
-        if commitment.starts_on is None:
-            return _read_challenge_terms(commitment)
-
-        other_id = (
-            commitment.recipient_id
-            if commitment.creator_id == db_user.id
-            else commitment.creator_id
-        )
-        tracks = compute_challenge_progress(
-            commitment,
-            completions.get((db_user.id, commitment.activity), []),
-            completions.get((other_id, commitment.activity), []),
-            today,
-        )
-        # Both tracks are computed; the response has room for one until it
-        # gets a shape that can hold two, and the caller's own is the one
-        # that can't be mistaken for somebody else's.
-        return _to_read(commitment, tracks.caller)
-
-    return CommitmentsListResponse(
-        active=[read(c) for c in active],
-        finished=[read(c) for c in finished],
-    )
+    reads = await _read_as(session, [*active, *finished], db_user.id, today)
+    return CommitmentsListResponse(active=reads[: len(active)], finished=reads[len(active) :])
 
 
-@router.get("/{commitment_id}", response_model=CommitmentRead)
+@router.get("/{commitment_id}", response_model=OrientedCommitmentRead)
 async def get_commitment(
     commitment: Commitment = Depends(_get_owned_commitment),
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
-) -> CommitmentRead:
+) -> OrientedCommitmentRead:
     today = user_today(db_user)
-    return await _build_read(session, commitment, today)
+    return await _read_one_as(session, commitment, db_user.id, today)
 
 
-@router.post("/{commitment_id}/end", response_model=CommitmentRead)
+@router.post("/{commitment_id}/end", response_model=OrientedCommitmentRead)
 async def end_commitment(
     commitment_id: uuid.UUID,
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
-) -> CommitmentRead:
+) -> OrientedCommitmentRead:
     # Ending is a state transition, not an edit - terms (duration_weeks,
     # sessions_per_week, ...) are frozen at creation and stay that way here.
     today = user_today(db_user)
@@ -463,7 +507,7 @@ async def end_commitment(
     session.add(commitment)
     await session.commit()
     await session.refresh(commitment)
-    return await _build_read(session, commitment, today)
+    return await _read_one_as(session, commitment, db_user.id, today)
 
 
 async def _count_running_challenges(session: AsyncSession, user_id: uuid.UUID, today: date) -> int:
@@ -526,12 +570,12 @@ async def _lock_pending_invite_for_recipient(
     return commitment
 
 
-@router.post("/{commitment_id}/accept", response_model=CommitmentRead)
+@router.post("/{commitment_id}/accept", response_model=OrientedCommitmentRead)
 async def accept_challenge(
     commitment_id: uuid.UUID,
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
-) -> CommitmentRead:
+) -> OrientedCommitmentRead:
     today = user_today(db_user)
     commitment = await _lock_pending_invite_for_recipient(session, commitment_id, db_user.id)
 
@@ -562,15 +606,16 @@ async def accept_challenge(
     session.add(commitment)
     await session.commit()
     await session.refresh(commitment)
-    return await _build_read(session, commitment, today)
+    # As the accepter sees it - they are "you" here, and the sender is "them".
+    return await _read_one_as(session, commitment, db_user.id, today)
 
 
-@router.post("/{commitment_id}/decline", response_model=CommitmentRead)
+@router.post("/{commitment_id}/decline", response_model=OrientedCommitmentRead)
 async def decline_challenge(
     commitment_id: uuid.UUID,
     db_user: User = Depends(get_current_db_user),
     session: AsyncSession = Depends(get_session),
-) -> CommitmentRead:
+) -> OrientedCommitmentRead:
     today = user_today(db_user)
     commitment = await _lock_pending_invite_for_recipient(session, commitment_id, db_user.id)
 
@@ -584,8 +629,7 @@ async def decline_challenge(
     session.add(commitment)
     await session.commit()
     await session.refresh(commitment)
-    # Never started, so there are no completions that could count toward it.
-    return _read_commitment(commitment, [], today)
+    return await _read_one_as(session, commitment, db_user.id, today)
 
 
 @router.delete("/{commitment_id}", status_code=status.HTTP_204_NO_CONTENT)

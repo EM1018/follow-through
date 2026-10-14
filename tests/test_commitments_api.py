@@ -62,23 +62,18 @@ async def test_create_goal_with_target(authed_client: tuple[AsyncClient, Current
     assert body["target_unit"] == "minutes"
     assert body["sessions_per_week"] == 3
     assert body["duration_weeks"] is None
-    assert body["recipient_id"] is None
-    assert body["invite_status"] is None
-    # A goal always starts today, so its first (in-progress) block exists
-    # immediately - "empty" means zero sessions logged so far, not zero blocks.
-    assert body["progress"]["blocks"] == [
-        {
-            "index": 0,
-            "starts_on": _today(),
-            "ends_on": body["progress"]["blocks"][0]["ends_on"],
-            "sessions_done": 0,
-            "sessions_required": 3,
-            "status": "in_progress",
-        }
+    assert body["status"] == "active"
+    # Nobody on the other side - that's what makes it a goal.
+    assert "them" not in body
+    assert body["starts_on"] == _today()
+    # A goal always starts today, so its first (in-progress) week exists
+    # immediately - "empty" means zero sessions logged so far, not zero weeks.
+    assert body["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 0, "met": False, "in_progress": True}
     ]
-    assert body["progress"]["current_streak"] == 0
-    assert body["progress"]["longest_streak"] == 0
-    assert body["progress"]["weeks_passed"] == 0
+    assert body["you"]["current_streak"] == 0
+    assert body["you"]["longest_streak"] == 0
+    assert body["you"]["weeks_passed"] == 0
 
 
 async def test_starts_on_uses_the_users_own_timezone_not_utc(
@@ -282,9 +277,9 @@ async def test_logged_completions_feed_goal_progress(
 
     response = await client.get(f"/commitments/{commitment_id}")
     assert response.status_code == 200
-    blocks = response.json()["progress"]["blocks"]
-    assert len(blocks) == 1
-    assert blocks[0]["sessions_done"] == 1
+    weeks = response.json()["you"]["weeks"]
+    assert len(weeks) == 1
+    assert weeks[0]["sessions_done"] == 1
 
 
 async def test_non_matching_completion_is_excluded_from_progress(
@@ -316,8 +311,8 @@ async def test_non_matching_completion_is_excluded_from_progress(
 
     response = await client.get(f"/commitments/{commitment_id}")
     assert response.status_code == 200
-    blocks = response.json()["progress"]["blocks"]
-    assert blocks[0]["sessions_done"] == 0
+    weeks = response.json()["you"]["weeks"]
+    assert weeks[0]["sessions_done"] == 0
 
     result = await session.exec(select(Completion).where(Completion.id == not_matching_id))
     assert result.one().user_id == me.user_id

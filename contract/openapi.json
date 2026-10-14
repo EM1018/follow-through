@@ -75,54 +75,6 @@
         "title": "ActivityInfo",
         "type": "object"
       },
-      "BlockRead": {
-        "properties": {
-          "ends_on": {
-            "format": "date",
-            "title": "Ends On",
-            "type": "string"
-          },
-          "index": {
-            "title": "Index",
-            "type": "integer"
-          },
-          "sessions_done": {
-            "title": "Sessions Done",
-            "type": "integer"
-          },
-          "sessions_required": {
-            "title": "Sessions Required",
-            "type": "integer"
-          },
-          "starts_on": {
-            "format": "date",
-            "title": "Starts On",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/BlockStatus"
-          }
-        },
-        "required": [
-          "index",
-          "starts_on",
-          "ends_on",
-          "sessions_done",
-          "sessions_required",
-          "status"
-        ],
-        "title": "BlockRead",
-        "type": "object"
-      },
-      "BlockStatus": {
-        "enum": [
-          "passed",
-          "in_progress",
-          "missed"
-        ],
-        "title": "BlockStatus",
-        "type": "string"
-      },
       "CommitmentCreate": {
         "additionalProperties": false,
         "properties": {
@@ -193,155 +145,31 @@
         "title": "CommitmentCreate",
         "type": "object"
       },
-      "CommitmentRead": {
-        "properties": {
-          "activity": {
-            "$ref": "#/components/schemas/Activity"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "creator_id": {
-            "format": "uuid",
-            "title": "Creator Id",
-            "type": "string"
-          },
-          "duration_weeks": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Weeks"
-          },
-          "ended_on": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ended On"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "invite_status": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/InviteStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "progress": {
-            "$ref": "#/components/schemas/ProgressRead"
-          },
-          "recipient_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recipient Id"
-          },
-          "rematch_of_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rematch Of Id"
-          },
-          "sessions_per_week": {
-            "title": "Sessions Per Week",
-            "type": "integer"
-          },
-          "starts_on": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Starts On"
-          },
-          "target_unit": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Unit"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "target_value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Value"
-          }
-        },
-        "required": [
-          "id",
-          "creator_id",
-          "recipient_id",
-          "activity",
-          "target_value",
-          "target_unit",
-          "sessions_per_week",
-          "duration_weeks",
-          "starts_on",
-          "ended_on",
-          "invite_status",
-          "rematch_of_id",
-          "created_at",
-          "progress"
+      "CommitmentStatus": {
+        "enum": [
+          "declined",
+          "sent",
+          "invite",
+          "expired",
+          "ended_early",
+          "finished",
+          "active"
         ],
-        "title": "CommitmentRead",
-        "type": "object"
+        "title": "CommitmentStatus",
+        "type": "string"
       },
       "CommitmentsListResponse": {
         "properties": {
           "active": {
             "items": {
-              "$ref": "#/components/schemas/CommitmentRead"
+              "$ref": "#/components/schemas/OrientedCommitmentRead"
             },
             "title": "Active",
             "type": "array"
           },
           "finished": {
             "items": {
-              "$ref": "#/components/schemas/CommitmentRead"
+              "$ref": "#/components/schemas/OrientedCommitmentRead"
             },
             "title": "Finished",
             "type": "array"
@@ -639,6 +467,14 @@
         "title": "Dimension",
         "type": "string"
       },
+      "EndedBy": {
+        "enum": [
+          "you",
+          "them"
+        ],
+        "title": "EndedBy",
+        "type": "string"
+      },
       "EntryRefRead": {
         "description": "Minimal reference to another entry - used both for what a substitution\nreplaced and what a cancellation cancelled, since both need exactly the\nsame information: which entry, and what to call it. Never None.entry_id;\nthe whole reference is Optional at the call site instead, for the cases\nwhere there is nothing to reference at all.",
         "properties": {
@@ -686,16 +522,6 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
-      },
-      "InviteStatus": {
-        "description": "Challenge-only - stays NULL for every goal (see ck_commitments_goal_shape).\nNothing writes this until Stage 3 wires up the invite flow; the column and\nits native Postgres enum type exist now so that stage needs no migration\nof its own.",
-        "enum": [
-          "pending",
-          "accepted",
-          "declined"
-        ],
-        "title": "InviteStatus",
-        "type": "string"
       },
       "MeRead": {
         "properties": {
@@ -766,6 +592,129 @@
           }
         },
         "title": "MeUpdate",
+        "type": "object"
+      },
+      "OrientedCommitmentRead": {
+        "description": "A goal or a challenge, as the caller sees it. One shape for both: a\ngoal is the one with no `them`.",
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Activity"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_weeks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Weeks"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EndedBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended On"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "sessions_per_week": {
+            "title": "Sessions Per Week",
+            "type": "integer"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommitmentStatus"
+          },
+          "target_unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Unit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Value"
+          },
+          "them": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "you": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "activity",
+          "target_value",
+          "target_unit",
+          "sessions_per_week",
+          "duration_weeks",
+          "created_at"
+        ],
+        "title": "OrientedCommitmentRead",
         "type": "object"
       },
       "PlanCreate": {
@@ -936,42 +885,6 @@
           }
         },
         "title": "PlanUpdate",
-        "type": "object"
-      },
-      "ProgressRead": {
-        "properties": {
-          "blocks": {
-            "items": {
-              "$ref": "#/components/schemas/BlockRead"
-            },
-            "title": "Blocks",
-            "type": "array"
-          },
-          "current_streak": {
-            "title": "Current Streak",
-            "type": "integer"
-          },
-          "longest_streak": {
-            "title": "Longest Streak",
-            "type": "integer"
-          },
-          "weeks_passed": {
-            "title": "Weeks Passed",
-            "type": "integer"
-          },
-          "weeks_total": {
-            "title": "Weeks Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "blocks",
-          "current_streak",
-          "longest_streak",
-          "weeks_passed",
-          "weeks_total"
-        ],
-        "title": "ProgressRead",
         "type": "object"
       },
       "ResolvedEntryRead": {
@@ -1370,6 +1283,73 @@
         "title": "ScheduleResponse",
         "type": "object"
       },
+      "ThemRead": {
+        "description": "The other participant in a challenge.",
+        "properties": {
+          "track": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "ThemRead",
+        "type": "object"
+      },
+      "TrackRead": {
+        "properties": {
+          "current_streak": {
+            "title": "Current Streak",
+            "type": "integer"
+          },
+          "longest_streak": {
+            "title": "Longest Streak",
+            "type": "integer"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/WeekRead"
+            },
+            "title": "Weeks",
+            "type": "array"
+          },
+          "weeks_passed": {
+            "title": "Weeks Passed",
+            "type": "integer"
+          },
+          "weeks_total": {
+            "title": "Weeks Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "weeks",
+          "weeks_total",
+          "weeks_passed",
+          "current_streak",
+          "longest_streak"
+        ],
+        "title": "TrackRead",
+        "type": "object"
+      },
       "Unit": {
         "enum": [
           "minutes",
@@ -1436,6 +1416,35 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WeekRead": {
+        "description": "One week of one person's track: how many sessions counted, and how the\nweek stands. This is all of someone's training that ever leaves the\nserver - never the completions behind the count (their dates, amounts,\nnotes, or ids).",
+        "properties": {
+          "in_progress": {
+            "title": "In Progress",
+            "type": "boolean"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "met": {
+            "title": "Met",
+            "type": "boolean"
+          },
+          "sessions_done": {
+            "title": "Sessions Done",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "sessions_done",
+          "met",
+          "in_progress"
+        ],
+        "title": "WeekRead",
         "type": "object"
       },
       "WorkoutCreate": {
@@ -1653,7 +1662,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitmentRead"
+                  "$ref": "#/components/schemas/OrientedCommitmentRead"
                 }
               }
             },
@@ -1741,7 +1750,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitmentRead"
+                  "$ref": "#/components/schemas/OrientedCommitmentRead"
                 }
               }
             },
@@ -1789,7 +1798,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitmentRead"
+                  "$ref": "#/components/schemas/OrientedCommitmentRead"
                 }
               }
             },
@@ -1837,7 +1846,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitmentRead"
+                  "$ref": "#/components/schemas/OrientedCommitmentRead"
                 }
               }
             },
@@ -1885,7 +1894,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CommitmentRead"
+                  "$ref": "#/components/schemas/OrientedCommitmentRead"
                 }
               }
             },

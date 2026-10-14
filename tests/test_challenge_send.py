@@ -73,25 +73,20 @@ async def pair(
 async def test_challenge_is_created_pending_and_not_started(
     pair: tuple[AsyncClient, CurrentUser, CurrentUser],
 ) -> None:
-    client, me, them = pair
+    client, _me, _them = pair
 
     response = await client.post("/commitments", json=_challenge_payload())
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["creator_id"] == str(me.user_id)
-    assert body["recipient_id"] == str(them.user_id)
-    assert body["invite_status"] == "pending"
-    # The clock starts at accept, not send.
-    assert body["starts_on"] is None
+    # The sender's view of it: sent, to the person they named.
+    assert body["status"] == "sent"
+    assert body["them"] == {"username": RECIPIENT_USERNAME}
     assert body["duration_weeks"] == 4
-    assert body["progress"] == {
-        "blocks": [],
-        "current_streak": 0,
-        "longest_streak": 0,
-        "weeks_passed": 0,
-        "weeks_total": 4,
-    }
+    # The clock starts at accept, not send - so no start date and no track
+    # for anyone yet, as opposed to empty ones.
+    assert "starts_on" not in body
+    assert "you" not in body
 
 
 async def test_goal_creation_is_unchanged_without_recipient_username(
@@ -105,8 +100,8 @@ async def test_goal_creation_is_unchanged_without_recipient_username(
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["recipient_id"] is None
-    assert body["invite_status"] is None
+    assert body["status"] == "active"
+    assert "them" not in body
     assert body["starts_on"] is not None
 
 
@@ -129,12 +124,13 @@ async def test_ongoing_goal_creation_still_works(
 async def test_recipient_lookup_is_case_insensitive(
     pair: tuple[AsyncClient, CurrentUser, CurrentUser], typed: str
 ) -> None:
-    client, _me, them = pair
+    client, _me, _them = pair
 
     response = await client.post("/commitments", json=_challenge_payload(recipient_username=typed))
 
     assert response.status_code == 201, response.text
-    assert response.json()["recipient_id"] == str(them.user_id)
+    # However it was typed, it found the one user - shown as they spell it.
+    assert response.json()["them"] == {"username": RECIPIENT_USERNAME}
 
 
 async def test_unknown_username_is_404(

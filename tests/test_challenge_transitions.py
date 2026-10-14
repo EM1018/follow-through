@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
@@ -196,7 +197,7 @@ async def test_recipient_accepts_a_live_invite(invite: Invite) -> None:
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["invite_status"] == "accepted"
+    assert body["status"] == "active"
     assert body["starts_on"] == _today().isoformat()
     row = await _fetch(invite.id)
     assert row is not None
@@ -354,8 +355,8 @@ async def test_recipient_declines_and_the_row_stays(invite: Invite) -> None:
     response = await invite.client.post(f"/commitments/{invite.id}/decline")
 
     assert response.status_code == 200, response.text
-    assert response.json()["invite_status"] == "declined"
-    assert response.json()["starts_on"] is None
+    assert response.json()["status"] == "declined"
+    assert "starts_on" not in response.json()
     row = await _fetch(invite.id)
     assert row is not None
     assert row.invite_status == InviteStatus.DECLINED
@@ -370,7 +371,7 @@ async def test_recipient_at_the_cap_can_still_decline(
     response = await invite.client.post(f"/commitments/{invite.id}/decline")
 
     assert response.status_code == 200, response.text
-    assert response.json()["invite_status"] == "declined"
+    assert response.json()["status"] == "declined"
 
 
 async def test_an_expired_invite_can_be_declined(invite: Invite, session: AsyncSession) -> None:
@@ -380,7 +381,7 @@ async def test_an_expired_invite_can_be_declined(invite: Invite, session: AsyncS
     response = await invite.client.post(f"/commitments/{invite.id}/decline")
 
     assert response.status_code == 200, response.text
-    assert response.json()["invite_status"] == "declined"
+    assert response.json()["status"] == "declined"
 
 
 async def test_creator_cannot_decline_their_own_invite(invite: Invite) -> None:
@@ -892,7 +893,7 @@ async def test_a_goal_is_still_listed_only_for_its_owner(invite: Invite) -> None
     assert goal_id not in await _active_ids(invite, invite.recipient)
 
 
-async def test_a_listed_goal_has_its_progress_and_an_unaccepted_challenge_has_none(
+async def test_a_listed_goal_has_its_track_and_an_unaccepted_challenge_has_none(
     invite: Invite,
 ) -> None:
     created = await invite.client.post(
@@ -903,15 +904,11 @@ async def test_a_listed_goal_has_its_progress_and_an_unaccepted_challenge_has_no
     response = await invite.client.get("/commitments")
 
     by_id = {item["id"]: item for item in response.json()["active"]}
-    assert len(by_id[created.json()["id"]]["progress"]["blocks"]) == 1
-    # Its clock hasn't started, so there is nothing to compute.
-    assert by_id[invite.id]["progress"] == {
-        "blocks": [],
-        "current_streak": 0,
-        "longest_streak": 0,
-        "weeks_passed": 0,
-        "weeks_total": 4,
-    }
+    assert len(by_id[created.json()["id"]]["you"]["weeks"]) == 1
+    # Its clock hasn't started, so there is nothing to compute - and nothing
+    # is sent, as opposed to a track with no weeks in it.
+    assert "you" not in by_id[invite.id]
+    assert by_id[invite.id]["them"] == {"username": RECIPIENT_USERNAME}
 
 
 async def test_a_live_pending_challenge_is_active_for_both(invite: Invite) -> None:
@@ -1083,20 +1080,20 @@ async def test_each_participant_is_listed_their_own_track(
     await _log(session, invite.sender, 10, 9, 8, 2)
     await _log(session, invite.recipient, 3)
 
-    as_sender = (await _listed(invite, invite.sender))["progress"]
-    as_recipient = (await _listed(invite, invite.recipient))["progress"]
+    as_sender = await _listed(invite, invite.sender)
+    as_recipient = await _listed(invite, invite.recipient)
 
-    assert [block["sessions_done"] for block in as_sender["blocks"]] == [3, 1]
-    assert [block["status"] for block in as_sender["blocks"]] == ["passed", "in_progress"]
-    assert [block["sessions_done"] for block in as_recipient["blocks"]] == [0, 1]
-    assert [block["status"] for block in as_recipient["blocks"]] == ["missed", "in_progress"]
-
-    def bounds(progress: dict[str, Any]) -> list[tuple[str, str]]:
-        return [(block["starts_on"], block["ends_on"]) for block in progress["blocks"]]
-
+    assert as_sender["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 3, "met": True, "in_progress": False},
+        {"index": 1, "sessions_done": 1, "met": False, "in_progress": True},
+    ]
+    assert as_recipient["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 0, "met": False, "in_progress": False},
+        {"index": 1, "sessions_done": 1, "met": False, "in_progress": True},
+    ]
     # One starts_on, one set of weeks - whoever is asking.
-    assert bounds(as_sender) == bounds(as_recipient)
-    assert as_sender["weeks_total"] == as_recipient["weeks_total"] == 4
+    assert as_sender["starts_on"] == as_recipient["starts_on"]
+    assert as_sender["you"]["weeks_total"] == as_recipient["you"]["weeks_total"] == 4
 
 
 async def test_another_activity_does_not_count_toward_a_listed_challenge(
@@ -1105,9 +1102,9 @@ async def test_another_activity_does_not_count_toward_a_listed_challenge(
     await _start_ten_days_ago(invite, session)
     await _log(session, invite.sender, 9, 8, activity="cycling")
 
-    progress = (await _listed(invite, invite.sender))["progress"]
+    track = (await _listed(invite, invite.sender))["you"]
 
-    assert [block["sessions_done"] for block in progress["blocks"]] == [0, 0]
+    assert [week["sessions_done"] for week in track["weeks"]] == [0, 0]
 
 
 async def test_a_goal_does_not_count_completions_fetched_for_an_older_challenge(
@@ -1127,10 +1124,10 @@ async def test_a_goal_does_not_count_completions_fetched_for_an_older_challenge(
     response = await invite.client.get("/commitments")
 
     by_id = {item["id"]: item for item in response.json()["active"]}
-    challenge_blocks = by_id[invite.id]["progress"]["blocks"]
-    goal_blocks = by_id[goal.json()["id"]]["progress"]["blocks"]
-    assert [block["sessions_done"] for block in challenge_blocks] == [2, 1]
-    assert [block["sessions_done"] for block in goal_blocks] == [1]
+    challenge_weeks = by_id[invite.id]["you"]["weeks"]
+    goal_weeks = by_id[goal.json()["id"]]["you"]["weeks"]
+    assert [week["sessions_done"] for week in challenge_weeks] == [2, 1]
+    assert [week["sessions_done"] for week in goal_weeks] == [1]
 
 
 async def test_list_query_count_does_not_grow_with_the_number_of_commitments(
@@ -1175,7 +1172,7 @@ async def test_list_query_count_does_not_grow_with_the_number_of_commitments(
 
 
 @pytest.mark.parametrize("state", ["pending", "declined", "expired"])
-async def test_a_never_started_challenge_has_no_progress_and_fetches_no_completions(
+async def test_a_never_started_challenge_has_no_track_and_fetches_no_completions(
     invite: Invite, session: AsyncSession, state: str
 ) -> None:
     if state == "declined":
@@ -1190,14 +1187,9 @@ async def test_a_never_started_challenge_has_no_progress_and_fetches_no_completi
     with _statements() as statements:
         listed = await _listed(invite, invite.sender)
 
-    assert listed["starts_on"] is None
-    assert listed["progress"] == {
-        "blocks": [],
-        "current_streak": 0,
-        "longest_streak": 0,
-        "weeks_passed": 0,
-        "weeks_total": 4,
-    }
+    assert "starts_on" not in listed
+    assert "you" not in listed
+    assert "track" not in listed["them"]
     # Nothing in the list has a clock running, so there's nothing to fetch.
     assert _reading(statements, "completions") == []
 
@@ -1227,6 +1219,180 @@ async def test_a_never_started_challenge_adds_nothing_to_the_completions_query(
     assert [value for value in flat if isinstance(value, date)] == [_today(), _today()]
 
 
+# oriented read - you and them, and what stays on the server
+
+
+async def test_both_participants_read_the_same_challenge_each_as_you(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 10, 9, 8, 2)
+    await _log(session, invite.recipient, 3)
+
+    as_sender = await _listed(invite, invite.sender)
+    as_recipient = await _listed(invite, invite.recipient)
+
+    assert as_sender["them"]["username"] == RECIPIENT_USERNAME
+    assert as_recipient["them"]["username"] == SENDER_USERNAME
+    assert [week["sessions_done"] for week in as_sender["you"]["weeks"]] == [3, 1]
+    assert [week["sessions_done"] for week in as_recipient["you"]["weeks"]] == [0, 1]
+    # The same two tracks under swapped labels - nothing recounted per viewer.
+    assert as_sender["you"] == as_recipient["them"]["track"]
+    assert as_sender["them"]["track"] == as_recipient["you"]
+
+
+@pytest.mark.parametrize("quitter", ["sender", "recipient"])
+async def test_ended_by_is_oriented_for_both_participants_after_a_quit(
+    invite: Invite, quitter: str
+) -> None:
+    await _accept(invite)
+    who_quit: CurrentUser = getattr(invite, quitter)
+    other = invite.recipient if quitter == "sender" else invite.sender
+    _switch_user(who_quit)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_by"] == "you"
+    assert (await _listed(invite, who_quit))["ended_by"] == "you"
+    as_other = await _listed(invite, other)
+    assert as_other["ended_by"] == "them"
+    assert as_other["ended_on"] == _today().isoformat()
+    assert as_other["status"] == "ended_early"
+
+
+async def test_an_active_challenge_has_no_ending_fields(invite: Invite) -> None:
+    await _accept(invite)
+
+    listed = await _listed(invite, invite.sender)
+
+    assert "ended_on" not in listed
+    assert "ended_by" not in listed
+
+
+async def test_no_completion_detail_leaves_the_server_for_either_participant(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    rows = [
+        Completion(
+            user_id=user.user_id,
+            activity="running",
+            value=Decimal("7.77"),
+            unit="miles",
+            on_date=_today() - timedelta(days=days_ago),
+            source="standalone",
+            label=f"LABEL-OF-{name}",
+            note=f"NOTE-OF-{name}",
+        )
+        for user, name, days_ago in (
+            (invite.sender, "SENDER", 9),
+            (invite.recipient, "RECIPIENT", 8),
+        )
+    ]
+    session.add_all(rows)
+    await session.commit()
+    planted = [
+        *(str(row.id) for row in rows),
+        *(row.on_date.isoformat() for row in rows),
+        "LABEL-OF-",
+        "NOTE-OF-",
+        "7.77",
+        "miles",
+        "standalone",
+    ]
+
+    responses = []
+    for viewer in (invite.sender, invite.recipient):
+        _switch_user(viewer)
+        responses.append(await invite.client.get("/commitments"))
+    _switch_user(invite.sender)
+    responses.append(await invite.client.get(f"/commitments/{invite.id}"))
+    responses.append(await invite.client.post(f"/commitments/{invite.id}/end"))
+
+    for response in responses:
+        assert response.status_code == 200, response.text
+        # Each was counted - one session, for each of them...
+        assert response.text.count('"sessions_done":1') == 2
+        # ...and the count is the only trace of it.
+        for secret in planted:
+            assert secret not in response.text, secret
+
+
+async def test_a_listed_challenge_carries_no_user_ids(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+
+    for viewer in (invite.sender, invite.recipient):
+        _switch_user(viewer)
+        response = await invite.client.get("/commitments")
+
+        assert str(invite.sender.user_id) not in response.text
+        assert str(invite.recipient.user_id) not in response.text
+
+
+async def test_accept_response_is_oriented_to_the_accepter(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # The sender already trained today, so the moment it's accepted there is
+    # one session on the sender's side and none on the accepter's.
+    await _log(session, invite.sender, 0)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "active"
+    assert body["them"]["username"] == SENDER_USERNAME
+    assert [week["sessions_done"] for week in body["you"]["weeks"]] == [0]
+    assert [week["sessions_done"] for week in body["them"]["track"]["weeks"]] == [1]
+
+
+async def test_decline_response_names_the_sender_and_has_no_tracks(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["them"] == {"username": SENDER_USERNAME}
+    assert "you" not in body
+    assert "starts_on" not in body
+
+
+async def test_them_username_follows_a_rename(invite: Invite, session: AsyncSession) -> None:
+    await _accept(invite)
+    assert (await _listed(invite, invite.sender))["them"]["username"] == RECIPIENT_USERNAME
+
+    await _set_username(session, invite.recipient.user_id, "renamed_since")
+
+    # Read off their user row each time - nothing was copied onto the challenge.
+    assert (await _listed(invite, invite.sender))["them"]["username"] == "renamed_since"
+
+
+async def test_listing_any_number_of_challenges_looks_up_names_once(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    for activity in ("walking", "cycling", "swimming"):
+        await _insert_challenge(
+            session,
+            creator_id=invite.sender.user_id,
+            recipient_id=invite.recipient.user_id,
+            activity=activity,
+        )
+    _switch_user(invite.sender)
+
+    with _statements() as statements:
+        response = await invite.client.get("/commitments")
+    assert len(response.json()["active"]) == 4
+
+    # The caller's own row, then one lookup for everybody else's name.
+    assert len(_reading(statements, "users")) == 2
+
+
 # single read
 
 
@@ -1236,5 +1402,6 @@ async def test_creator_can_read_a_pending_invite_by_id(invite: Invite) -> None:
     response = await invite.client.get(f"/commitments/{invite.id}")
 
     assert response.status_code == 200, response.text
-    assert response.json()["starts_on"] is None
-    assert response.json()["progress"]["blocks"] == []
+    assert response.json()["status"] == "sent"
+    assert "starts_on" not in response.json()
+    assert "you" not in response.json()
