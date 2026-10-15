@@ -4,13 +4,15 @@ import { api } from '@/api/client';
 import { unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
 
-import { isGoal } from './goalShape';
+import { hasCardLayout, isGoal } from './goalShape';
 
 export type CommitmentRead = components['schemas']['OrientedCommitmentRead'];
 export type CommitmentCreate = components['schemas']['CommitmentCreate'];
 export type CommitmentsListResponse = components['schemas']['CommitmentsListResponse'];
+export type CommitmentStatus = components['schemas']['CommitmentStatus'];
 export type TrackRead = components['schemas']['TrackRead'];
 export type WeekRead = components['schemas']['WeekRead'];
+export type ThemRead = components['schemas']['ThemRead'];
 
 /** The Goals tab's one query -- the whole screen is driven by this single cache entry. */
 export const COMMITMENTS_QUERY_KEY = ['commitments'] as const;
@@ -35,7 +37,11 @@ export function deleteCommitment(id: string): Promise<void> {
   );
 }
 
-/** The list carries challenges too, in the same buckets -- the goal screens only draw goals. */
+/**
+ * The list carries challenges too, in the same buckets. Manage Goals and the
+ * profile count stay goals-only: Manage Goals' End/Delete actions have no
+ * challenge meaning yet (End on a challenge is a quit).
+ */
 function selectGoals(data: CommitmentsListResponse): CommitmentsListResponse {
   return { active: data.active.filter(isGoal), finished: data.finished.filter(isGoal) };
 }
@@ -45,6 +51,23 @@ export function useGoals() {
     queryKey: COMMITMENTS_QUERY_KEY,
     queryFn: listCommitments,
     select: selectGoals,
+  });
+}
+
+/**
+ * The Goals tab's cards: goals and challenges together, minus the statuses
+ * with no card layout yet. sent/invite arrive in `active` and
+ * declined/expired in `finished`, so both buckets are gated.
+ */
+function selectCards(data: CommitmentsListResponse): CommitmentsListResponse {
+  return { active: data.active.filter(hasCardLayout), finished: data.finished.filter(hasCardLayout) };
+}
+
+export function useGoalCards() {
+  return useQuery<CommitmentsListResponse, ApiError>({
+    queryKey: COMMITMENTS_QUERY_KEY,
+    queryFn: listCommitments,
+    select: selectCards,
   });
 }
 

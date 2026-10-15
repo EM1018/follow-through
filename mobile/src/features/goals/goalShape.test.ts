@@ -1,6 +1,6 @@
-import { goalTrack, isGoal } from './goalShape';
+import { ownTrack, hasCardLayout, isGoal } from './goalShape';
 
-import type { TrackRead } from './commitments';
+import type { CommitmentStatus, TrackRead } from './commitments';
 
 const track: TrackRead = { weeks: [], current_streak: 0, longest_streak: 0, weeks_passed: 0, weeks_total: 1 };
 
@@ -18,12 +18,22 @@ describe('isGoal', () => {
   });
 });
 
-describe('goalTrack', () => {
+describe('ownTrack', () => {
   it("returns the goal's own track", () => {
-    expect(goalTrack({ id: 'g1', you: track })).toBe(track);
+    expect(ownTrack({ id: 'g1', you: track })).toBe(track);
   });
 
   it('throws when a goal arrives without you', () => {
-    expect(() => goalTrack({ id: 'g1' })).toThrow('g1');
+    expect(() => ownTrack({ id: 'g1' })).toThrow('g1');
+  });
+});
+
+describe('hasCardLayout', () => {
+  it.each<CommitmentStatus>(['active', 'finished', 'ended_early'])('lets %s through to the card', (status) => {
+    expect(hasCardLayout({ status })).toBe(true);
+  });
+
+  it.each<CommitmentStatus>(['sent', 'invite', 'declined', 'expired'])('keeps %s off the card until F3', (status) => {
+    expect(hasCardLayout({ status })).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { CommitmentRead, TrackRead } from './commitments';
+import type { CommitmentRead, CommitmentStatus, TrackRead } from './commitments';
 
 /**
  * A goal is the commitment with no `them` -- the server leaves it out of a
@@ -13,13 +13,26 @@ export function isGoal(commitment: Pick<CommitmentRead, 'id' | 'them'>): boolean
 }
 
 /**
- * A goal's own track. `you` is only optional in the contract for challenges
- * that haven't started; a goal's clock starts when it's created, so the
- * server always sends it. Missing here is a backend bug, not a state to draw.
+ * The viewer's own track. `you` is only optional in the contract for
+ * challenges that haven't started -- a goal's clock starts when it's created,
+ * and every status that reaches the card (hasCardLayout) has a started clock.
+ * Missing here is a backend bug or a gate that let the wrong row through, not
+ * a state to draw.
  */
-export function goalTrack(goal: Pick<CommitmentRead, 'id' | 'you'>): TrackRead {
-  if (goal.you == null) {
-    throw new Error(`Goal ${goal.id} arrived without its 'you' track`);
+export function ownTrack(commitment: Pick<CommitmentRead, 'id' | 'you'>): TrackRead {
+  if (commitment.you == null) {
+    throw new Error(`Commitment ${commitment.id} arrived without its 'you' track`);
   }
-  return goal.you;
+  return commitment.you;
+}
+
+/**
+ * Statuses the Goals tab card has a layout for. A goal is only ever one of
+ * these; sent, invite, declined and expired are challenge-only and have no
+ * card yet. F3 removes this filter when it builds them.
+ */
+const CARD_STATUSES: ReadonlySet<CommitmentStatus> = new Set(['active', 'finished', 'ended_early']);
+
+export function hasCardLayout(commitment: Pick<CommitmentRead, 'status'>): boolean {
+  return CARD_STATUSES.has(commitment.status);
 }

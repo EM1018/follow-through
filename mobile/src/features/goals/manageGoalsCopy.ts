@@ -1,5 +1,5 @@
 import type { CommitmentRead } from './commitments';
-import { goalTrack } from './goalShape';
+import { ownTrack } from './goalShape';
 import { goalTermsLine } from './goalTerms';
 
 export type GoalVariant = 'active' | 'finished';
@@ -7,7 +7,7 @@ export type GoalVariant = 'active' | 'finished';
 type PositionInput = Pick<CommitmentRead, 'id' | 'you' | 'duration_weeks'>;
 
 function positionLabel(commitment: PositionInput, variant: GoalVariant): string {
-  const track = goalTrack(commitment);
+  const track = ownTrack(commitment);
   if (variant === 'finished') {
     return `${track.weeks_passed} of ${track.weeks_total} weeks passed`;
   }
