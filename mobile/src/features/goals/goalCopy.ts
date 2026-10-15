@@ -10,6 +10,8 @@ export const EMPTY_GOALS_TITLE = 'Your goals show up here';
 export const EMPTY_GOALS_SUBTITLE =
   'Pick an activity and how often. Anything you log counts toward it automatically.';
 export const NEW_GOAL_BUTTON_LABEL = 'New goal';
+/** Solo selected, but every row is a challenge -- a short line, not the full first-run empty state. */
+export const NO_SOLO_GOALS = 'No solo goals right now.';
 
 /** A challenge card's top row -- always the viewer's; the server already orients the response. */
 export const CHALLENGE_YOU_LABEL = 'You';

@@ -1,4 +1,4 @@
-import { ownTrack, hasCardLayout, isGoal } from './goalShape';
+import { isGoal, isUnstarted, ownTrack } from './goalShape';
 
 import type { CommitmentStatus, TrackRead } from './commitments';
 
@@ -28,12 +28,12 @@ describe('ownTrack', () => {
   });
 });
 
-describe('hasCardLayout', () => {
-  it.each<CommitmentStatus>(['active', 'finished', 'ended_early'])('lets %s through to the card', (status) => {
-    expect(hasCardLayout({ status })).toBe(true);
+describe('isUnstarted', () => {
+  it.each<CommitmentStatus>(['sent', 'invite', 'declined', 'expired'])('treats %s as never started', (status) => {
+    expect(isUnstarted({ status })).toBe(true);
   });
 
-  it.each<CommitmentStatus>(['sent', 'invite', 'declined', 'expired'])('keeps %s off the card until F3', (status) => {
-    expect(hasCardLayout({ status })).toBe(false);
+  it.each<CommitmentStatus>(['active', 'finished', 'ended_early'])('treats %s as started', (status) => {
+    expect(isUnstarted({ status })).toBe(false);
   });
 });

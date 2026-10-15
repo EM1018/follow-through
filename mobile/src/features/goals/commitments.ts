@@ -4,7 +4,7 @@ import { api } from '@/api/client';
 import { unwrap, type ApiError } from '@/api/errors';
 import type { components } from '@/api/schema';
 
-import { hasCardLayout, isGoal } from './goalShape';
+import { isGoal } from './goalShape';
 
 export type CommitmentRead = components['schemas']['OrientedCommitmentRead'];
 export type CommitmentCreate = components['schemas']['CommitmentCreate'];
@@ -31,6 +31,18 @@ export function endCommitment(id: string): Promise<CommitmentRead> {
   );
 }
 
+export function acceptChallenge(id: string): Promise<CommitmentRead> {
+  return unwrap(
+    api.POST('/commitments/{commitment_id}/accept', { params: { path: { commitment_id: id } } }),
+  );
+}
+
+export function declineChallenge(id: string): Promise<CommitmentRead> {
+  return unwrap(
+    api.POST('/commitments/{commitment_id}/decline', { params: { path: { commitment_id: id } } }),
+  );
+}
+
 export function deleteCommitment(id: string): Promise<void> {
   return unwrap(
     api.DELETE('/commitments/{commitment_id}', { params: { path: { commitment_id: id } } }),
@@ -54,20 +66,11 @@ export function useGoals() {
   });
 }
 
-/**
- * The Goals tab's cards: goals and challenges together, minus the statuses
- * with no card layout yet. sent/invite arrive in `active` and
- * declined/expired in `finished`, so both buckets are gated.
- */
-function selectCards(data: CommitmentsListResponse): CommitmentsListResponse {
-  return { active: data.active.filter(hasCardLayout), finished: data.finished.filter(hasCardLayout) };
-}
-
+/** The Goals tab's cards: every goal and challenge, in every status, as the server sent them. */
 export function useGoalCards() {
   return useQuery<CommitmentsListResponse, ApiError>({
     queryKey: COMMITMENTS_QUERY_KEY,
     queryFn: listCommitments,
-    select: selectCards,
   });
 }
 

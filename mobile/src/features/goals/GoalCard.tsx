@@ -3,13 +3,15 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Card } from '@/components/Card';
 import { colors, fontSize, fontWeight, heroFontSize, segmentBar, spacing } from '@/theme';
 
+import { QuitAction } from './ChallengeActions';
 import { ChallengeTracks } from './ChallengeTracks';
 import { challengeRows, circlesFor } from './circles';
 import type { CommitmentRead } from './commitments';
 import { GoalCircles } from './GoalCircles';
 import { challengeThemLabel, ENDED_EARLY_HEADER, endedEarlyLine } from './goalCopy';
-import { isGoal, ownTrack } from './goalShape';
+import { isGoal, isUnstarted, ownTrack } from './goalShape';
 import { finishedWeekLabel, goalTermsLine, streakLabel } from './goalTerms';
+import { UnstartedChallengeCard } from './UnstartedChallengeCard';
 
 type GoalCardProps = {
   commitment: CommitmentRead;
@@ -17,6 +19,8 @@ type GoalCardProps = {
   activityDisplayName: string;
   expanded: boolean;
   onPress: () => void;
+  /** At the challenge cap: an invite card's Accept renders disabled. */
+  acceptBlocked?: boolean;
 };
 
 /**
@@ -26,7 +30,26 @@ type GoalCardProps = {
  * and finished expanded layouts differ -- the collapsed row is identical
  * either way, since it never shows a hero number to begin with.
  */
-export function GoalCard({ commitment, variant, activityDisplayName, expanded, onPress }: GoalCardProps) {
+export function GoalCard({
+  commitment,
+  variant,
+  activityDisplayName,
+  expanded,
+  onPress,
+  acceptBlocked = false,
+}: GoalCardProps) {
+  // A challenge that never started has no track to draw -- branch it off
+  // before anything below asks for one.
+  if (isUnstarted(commitment)) {
+    return (
+      <UnstartedChallengeCard
+        commitment={commitment}
+        activityDisplayName={activityDisplayName}
+        acceptBlocked={acceptBlocked}
+      />
+    );
+  }
+
   const track = ownTrack(commitment);
   // The last returned week is always "this week" for an active goal -- only
   // the most recent week can ever be in_progress, everything before it is
@@ -114,6 +137,9 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
             <View style={styles.divider} />
             {weekRows('normal')}
             <Text style={styles.streak}>{streakLabel(track.current_streak)}</Text>
+            {challenge && commitment.status === 'active' ? (
+              <QuitAction commitmentId={commitment.id} themLabel={challenge.themLabel} />
+            ) : null}
           </>
         ) : (
           <>
