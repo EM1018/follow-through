@@ -1,10 +1,11 @@
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from app.models.commitment import Commitment
+from app.models.commitment import Commitment, InviteStatus
 from app.models.completion import Completion
 from app.services.activities import Unit
 
@@ -107,17 +108,22 @@ def _sessions_done(
     return len(qualifying_days)
 
 
-def compute_progress(
-    commitment: Commitment, completions: Sequence[Completion], today: date
-) -> Progress:
-    """Pure and clock-blind, same shape as resolve() in resolution.py - `today`
-    is always a parameter, never read from a clock, so a caller-supplied
-    timezone (e.g. a future users.timezone column) only ever changes what gets
-    passed in here, not this function's body.
+@dataclass
+class _Windows:
+    """A commitment's week blocks as of some day: where each one starts and
+    ends, and how many there are in all. Says nothing about who did what in
+    them - the boundaries belong to the commitment, not to a person.
     """
-    starts_on = commitment.starts_on
-    assert starts_on is not None  # goals always have one - ck_commitments_goal_shape
 
+    # (starts_on, ends_on) per block, in order; position is the block's index.
+    # Stops at the block containing `today` - weeks not reached yet are left
+    # out rather than listed, which is what keeps "hasn't happened" from
+    # reading as "missed". weeks_total is how a reader knows more are coming.
+    bounds: list[tuple[date, date]]
+    weeks_total: int
+
+
+def _block_windows(commitment: Commitment, starts_on: date, today: date) -> _Windows:
     if commitment.ended_on is not None:
         # Only fully-elapsed blocks (ends_on <= ended_on) survive - one still
         # open when the goal ended is dropped entirely, never stamped missed.
@@ -134,16 +140,27 @@ def compute_progress(
         max_index = current_index
         weeks_total = current_index + 1
 
+    return _Windows(
+        bounds=[_block_bounds(starts_on, index) for index in range(max_index + 1)],
+        weeks_total=weeks_total,
+    )
+
+
+def _track(
+    commitment: Commitment, windows: _Windows, completions: Sequence[Completion], today: date
+) -> Progress:
+    """One person's progress through `windows`: their sessions counted into
+    each block, and the streaks that follow from that.
+    """
     blocks: list[Block] = []
-    for index in range(max_index + 1):
-        block_starts_on, block_ends_on = _block_bounds(starts_on, index)
+    for index, (block_starts_on, block_ends_on) in enumerate(windows.bounds):
         sessions_done = _sessions_done(commitment, completions, block_starts_on, block_ends_on)
 
         # PASSED takes priority regardless of where `today` falls - hitting the
         # target closes a block out early. Otherwise: still open (contains
         # today) is IN_PROGRESS, already elapsed and short is MISSED. Blocks
-        # entirely after today are never constructed at all (max_index caps
-        # the loop), so there is no third, future-dated case to handle here.
+        # entirely after today are never constructed at all (the windows stop
+        # at today), so there is no third, future-dated case to handle here.
         # An ended commitment can never be IN_PROGRESS - every block emitted
         # above already ended on or before ended_on, so there's no more time
         # left for it to still be open.
@@ -197,5 +214,194 @@ def compute_progress(
         current_streak=current_streak,
         longest_streak=longest_streak,
         weeks_passed=weeks_passed,
-        weeks_total=weeks_total,
+        weeks_total=windows.weeks_total,
     )
+
+
+def compute_progress(
+    commitment: Commitment, completions: Sequence[Completion], today: date
+) -> Progress:
+    """Pure and clock-blind, same shape as resolve() in resolution.py - `today`
+    is always a parameter, never read from a clock, so a caller-supplied
+    timezone (e.g. a future users.timezone column) only ever changes what gets
+    passed in here, not this function's body.
+    """
+    starts_on = commitment.starts_on
+    if starts_on is None:
+        # A challenge nobody has accepted yet - its clock starts at accept, so
+        # there are no blocks to walk. Goals never get here
+        # (ck_commitments_goal_shape).
+        return Progress(
+            blocks=[],
+            current_streak=0,
+            longest_streak=0,
+            weeks_passed=0,
+            weeks_total=commitment.duration_weeks or 0,
+        )
+
+    return _track(commitment, _block_windows(commitment, starts_on, today), completions, today)
+
+
+@dataclass
+class ChallengeProgress:
+    """Both participants' progress through one challenge, over the same week
+    blocks. Named for who is looking, since the two sides are told apart by
+    viewer everywhere else a challenge is read (see derive_status()).
+    """
+
+    caller: Progress
+    other: Progress
+
+
+def compute_challenge_progress(
+    commitment: Commitment,
+    caller_completions: Sequence[Completion],
+    other_completions: Sequence[Completion],
+    today: date,
+) -> ChallengeProgress:
+    """Two tracks over one set of boundaries.
+
+    The blocks are worked out once, from the challenge's single starts_on,
+    and both people are matched against that same list - never a set of
+    boundaries each. Week 2 has to be the same seven days for both or there
+    is nothing to compare, and it's also why a quit drops the same partial
+    week from both sides.
+
+    `today` is the caller's, for both tracks. The other participant may be in
+    a different timezone, so their newest day can show up a few hours late;
+    matching each side against its own clock would mean two time references
+    in one comparison, which is the worse trade.
+
+    Only for a challenge whose clock has started. One that was never accepted
+    has no starts_on and so no progress at all - callers branch on that
+    before getting here, rather than asking for an empty result.
+    """
+    if commitment.starts_on is None:
+        raise ValueError(f"challenge {commitment.id} has no starts_on to compute progress from")
+
+    windows = _block_windows(commitment, commitment.starts_on, today)
+    return ChallengeProgress(
+        caller=_track(commitment, windows, caller_completions, today),
+        other=_track(commitment, windows, other_completions, today),
+    )
+
+
+# How long a pending invite stays answerable. The only place this number
+# lives - everything that cares whether an invite is still live calls
+# is_live_pending() rather than redoing the arithmetic, so the list read, the
+# accept guard, and the duplicate check at send can never disagree about it.
+INVITE_LIVE_DAYS = 14
+
+
+def is_live_pending(commitment: Commitment, today: date) -> bool:
+    """Whether `commitment` is a pending invite that can still be answered.
+
+    Expiry is derived, never stored - same idea as "finished", which is
+    computed from starts_on + duration_weeks rather than flagged. There is no
+    `expired` invite_status and no job that writes one; a pending row just
+    stops being live once INVITE_LIVE_DAYS have passed. The bound is
+    exclusive: live through day 13, expired from day 14 on.
+    """
+    if commitment.invite_status != InviteStatus.PENDING:
+        return False
+
+    return today - commitment.created_at.date() < timedelta(days=INVITE_LIVE_DAYS)
+
+
+# How many challenges one person can have running at once. Checked when an
+# invite is accepted, never when it's sent. Goals have their own separate cap.
+CHALLENGE_CAP = 5
+
+
+class CommitmentStatus(StrEnum):
+    DECLINED = "declined"
+    SENT = "sent"
+    INVITE = "invite"
+    EXPIRED = "expired"
+    ENDED_EARLY = "ended_early"
+    FINISHED = "finished"
+    ACTIVE = "active"
+
+
+def derive_status(commitment: Commitment, viewer_id: uuid.UUID, today: date) -> CommitmentStatus:
+    """The one status a commitment has for `viewer_id` as of `today`.
+
+    A ladder, not a set of independent checks - several rungs can be true of
+    the same row at once, so the order below is the rule, not a style choice.
+
+    Clock-blind, like compute_progress(): `today` is computed once per request
+    by the caller and handed to both, so status and progress can never land on
+    different dates either side of midnight within a single response.
+
+    Goals and challenges share the ladder and the vocabulary. There is no
+    "goal" status - what makes a row a goal is recipient_id being NULL, not
+    what this returns. The declined and pending rungs compare invite_status
+    against a specific value, so a goal's NULL matches neither and falls
+    through to the rungs both row types share.
+    """
+    if commitment.invite_status == InviteStatus.DECLINED:
+        return CommitmentStatus.DECLINED
+
+    if commitment.invite_status == InviteStatus.PENDING:
+        if not is_live_pending(commitment, today):
+            return CommitmentStatus.EXPIRED
+        # One row holds both participants - there is no second row for the
+        # recipient - so the same pending row reads differently depending on
+        # who is looking at it.
+        if viewer_id == commitment.creator_id:
+            return CommitmentStatus.SENT
+        return CommitmentStatus.INVITE
+
+    # Goals and accepted challenges get this far. An accepted challenge
+    # without both terms is an impossible row: Ongoing is rejected at send,
+    # and accept stamps starts_on in the same transaction that sets the
+    # status. Answering "active" would be a challenge that never finishes and
+    # never leaves anyone's list with nothing reporting a problem - raising
+    # points at the write path that let the row through instead. Pending rows
+    # legitimately have no starts_on, which is why this sits below their rung
+    # and not above it.
+    #
+    # Gated on the row being a challenge, not on the field being absent: an
+    # Ongoing goal has no duration_weeks either, and that's a legitimate shape.
+    if commitment.recipient_id is not None:
+        if commitment.starts_on is None:
+            raise ValueError(f"accepted challenge {commitment.id} has no starts_on")
+        if commitment.duration_weeks is None:
+            raise ValueError(f"accepted challenge {commitment.id} has no duration_weeks")
+
+    # ended_on before the end-date comparison, always. A quit challenge
+    # eventually passes its original end date too - checked the other way
+    # round, every quit would quietly turn into "finished" once enough time
+    # went by, and who ended it early would drop out of the UI.
+    if commitment.ended_on is not None:
+        return CommitmentStatus.ENDED_EARLY
+
+    # Only an Ongoing goal gets here without a duration - it never finishes
+    # on its own, so there's no end date to compare against.
+    if commitment.duration_weeks is None:
+        return CommitmentStatus.ACTIVE
+    assert commitment.starts_on is not None  # goals always have one - ck_commitments_goal_shape
+
+    ends_on = commitment.starts_on + timedelta(weeks=commitment.duration_weeks)
+    if today >= ends_on:
+        return CommitmentStatus.FINISHED
+
+    return CommitmentStatus.ACTIVE
+
+
+def blocks_new_challenge(commitment: Commitment, today: date) -> bool:
+    """Whether an existing challenge between two people stops them starting
+    another one for the same activity: it does while it's active or still an
+    answerable invite, and stops the moment it's declined, expired, quit, or
+    finished.
+
+    Built from is_live_pending() and derive_status() rather than its own date
+    arithmetic - if this drifted from them, an expired invite could vanish
+    from both participants' lists while still blocking every new send, with
+    nothing in the app able to clear it.
+    """
+    if is_live_pending(commitment, today):
+        return True
+    # "active" reads the same for both participants, so whose eyes
+    # derive_status looks through doesn't matter here.
+    return derive_status(commitment, commitment.creator_id, today) == CommitmentStatus.ACTIVE

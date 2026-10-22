@@ -1,10 +1,10 @@
 import { canEndGoal, goalRowSubtitle } from './manageGoalsCopy';
 
-import type { CommitmentRead } from './commitments';
+import type { TrackRead } from './commitments';
 
-function progress(overrides: Partial<CommitmentRead['progress']> = {}): CommitmentRead['progress'] {
+function track(overrides: Partial<TrackRead> = {}): TrackRead {
   return {
-    blocks: [],
+    weeks: [],
     current_streak: 0,
     longest_streak: 0,
     weeks_passed: 0,
@@ -17,11 +17,12 @@ describe('goalRowSubtitle', () => {
   it('renders a targeted, fixed-length active goal as "amount · frequency · week N of M"', () => {
     const subtitle = goalRowSubtitle(
       {
+        id: 'goal-1',
         target_value: 2,
         target_unit: 'miles',
         sessions_per_week: 2,
         duration_weeks: 2,
-        progress: progress({ blocks: [{ index: 1, starts_on: '', ends_on: '', sessions_done: 0, sessions_required: 2, status: 'in_progress' }] }),
+        you: track({ weeks: [{ index: 1, sessions_done: 0, met: false, in_progress: true }] }),
       },
       'active',
     );
@@ -31,11 +32,12 @@ describe('goalRowSubtitle', () => {
   it('renders an untargeted, ongoing active goal as "frequency · ongoing"', () => {
     const subtitle = goalRowSubtitle(
       {
+        id: 'goal-1',
         target_value: null,
         target_unit: null,
         sessions_per_week: 4,
         duration_weeks: null,
-        progress: progress(),
+        you: track(),
       },
       'active',
     );
@@ -45,11 +47,12 @@ describe('goalRowSubtitle', () => {
   it('renders "Every day" for sessions_per_week === 7, with a fixed-length position', () => {
     const subtitle = goalRowSubtitle(
       {
+        id: 'goal-1',
         target_value: null,
         target_unit: null,
         sessions_per_week: 7,
         duration_weeks: 3,
-        progress: progress({ blocks: [{ index: 0, starts_on: '', ends_on: '', sessions_done: 0, sessions_required: 7, status: 'in_progress' }] }),
+        you: track({ weeks: [{ index: 0, sessions_done: 0, met: false, in_progress: true }] }),
       },
       'active',
     );
@@ -59,11 +62,12 @@ describe('goalRowSubtitle', () => {
   it('renders a finished goal as "amount · frequency · X of Y weeks passed"', () => {
     const subtitle = goalRowSubtitle(
       {
+        id: 'goal-1',
         target_value: 5,
         target_unit: 'miles',
         sessions_per_week: 3,
         duration_weeks: 2,
-        progress: progress({ weeks_passed: 2, weeks_total: 2 }),
+        you: track({ weeks_passed: 2, weeks_total: 2 }),
       },
       'finished',
     );

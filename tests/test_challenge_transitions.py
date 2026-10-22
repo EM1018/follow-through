@@ -1,0 +1,1407 @@
+import asyncio
+import contextlib
+import uuid
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+from fastapi import Header
+from httpx import AsyncClient, Response
+from sqlalchemy import event
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.deps import CurrentUser, get_current_user
+from app.main import app
+from app.models.commitment import Commitment, InviteStatus
+from app.models.completion import Completion
+from app.models.user import User
+from app.routers import commitments as commitments_router
+from app.routers.commitments import (
+    CHALLENGE_ALREADY_ACCEPTED,
+    CHALLENGE_CAP_REACHED,
+    CHALLENGE_NOT_ACTIVE,
+    INVITE_EXPIRED,
+    INVITE_NOT_PENDING,
+    INVITE_UNAVAILABLE,
+)
+from app.services import dates
+from app.services.commitments import (
+    CHALLENGE_CAP,
+    INVITE_LIVE_DAYS,
+    CommitmentStatus,
+    derive_status,
+)
+from tests.conftest import test_engine
+from tests.conftest import test_session_maker as session_maker
+
+SENDER_USERNAME = "sender_one"
+RECIPIENT_USERNAME = "recipient_one"
+
+# Activities for rows inserted straight into the table. The invite under test
+# is always "running", so these never collide with it.
+_FILLER_ACTIVITIES = ["walking", "cycling", "swimming", "cardio", "other"]
+
+
+@dataclass
+class Invite:
+    """A live pending invite from `sender` to `recipient`, with `sender` as
+    the acting user until a test switches.
+    """
+
+    client: AsyncClient
+    sender: CurrentUser
+    recipient: CurrentUser
+    id: str
+
+
+def _switch_user(user: CurrentUser) -> None:
+    """Reassign the shared get_current_user override to act as a different user
+    (see second_user fixture in conftest.py for why this is a reassignment, not a
+    second client).
+    """
+    app.dependency_overrides[get_current_user] = lambda: user
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _code(response: Response) -> str:
+    return response.json()["detail"]["code"]
+
+
+async def _set_username(session: AsyncSession, user_id: uuid.UUID, username: str) -> None:
+    user = await session.get(User, user_id)
+    assert user is not None
+    user.username = username
+    session.add(user)
+    await session.commit()
+
+
+async def _send(
+    client: AsyncClient, *, headers: dict[str, str] | None = None, **overrides: Any
+) -> str:
+    payload: dict[str, Any] = {
+        "activity": "running",
+        "sessions_per_week": 3,
+        "duration_weeks": 4,
+        "recipient_username": RECIPIENT_USERNAME,
+    }
+    payload.update(overrides)
+    response = await client.post("/commitments", json=payload, headers=headers)
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _fetch(commitment_id: str) -> Commitment | None:
+    """A fresh session every time - the shared `session` fixture would hand
+    back whatever it cached before the API changed the row.
+    """
+    async with session_maker() as fresh:
+        return await fresh.get(Commitment, uuid.UUID(commitment_id))
+
+
+async def _update_commitment(session: AsyncSession, commitment_id: str, **fields: Any) -> None:
+    """Reaches past the API for states that would otherwise take weeks to
+    arrive (expiry).
+    """
+    commitment = await session.get(Commitment, uuid.UUID(commitment_id))
+    assert commitment is not None
+    for name, value in fields.items():
+        setattr(commitment, name, value)
+    session.add(commitment)
+    await session.commit()
+
+
+async def _expire(session: AsyncSession, commitment_id: str) -> None:
+    await _update_commitment(
+        session,
+        commitment_id,
+        created_at=datetime.now(UTC) - timedelta(days=INVITE_LIVE_DAYS + 1),
+    )
+
+
+async def _insert_challenge(
+    session: AsyncSession,
+    *,
+    creator_id: uuid.UUID,
+    recipient_id: uuid.UUID,
+    activity: str,
+    invite_status: InviteStatus = InviteStatus.ACCEPTED,
+    starts_on: date | None = None,
+    ended_on: date | None = None,
+    duration_weeks: int = 4,
+) -> None:
+    if starts_on is None and invite_status == InviteStatus.ACCEPTED:
+        starts_on = _today()
+    session.add(
+        Commitment(
+            creator_id=creator_id,
+            recipient_id=recipient_id,
+            activity=activity,
+            sessions_per_week=3,
+            duration_weeks=duration_weeks,
+            starts_on=starts_on,
+            ended_on=ended_on,
+            invite_status=invite_status,
+        )
+    )
+    await session.commit()
+
+
+async def _give_running_challenges(
+    session: AsyncSession, user: CurrentUser, other: CurrentUser, count: int
+) -> None:
+    """Alternates which side `user` is on - the cap counts both."""
+    for index in range(count):
+        creator, recipient = (user, other) if index % 2 else (other, user)
+        await _insert_challenge(
+            session,
+            creator_id=creator.user_id,
+            recipient_id=recipient.user_id,
+            activity=_FILLER_ACTIVITIES[index],
+        )
+
+
+async def _make_user(session: AsyncSession) -> CurrentUser:
+    user = CurrentUser(user_id=uuid.uuid4(), email="third-user@example.com")
+    session.add(User(id=user.user_id, email=user.email))
+    await session.commit()
+    return user
+
+
+@pytest.fixture
+async def invite(
+    authed_client: tuple[AsyncClient, CurrentUser],
+    second_user: CurrentUser,
+    session: AsyncSession,
+) -> Invite:
+    client, me = authed_client
+    await _set_username(session, me.user_id, SENDER_USERNAME)
+    await _set_username(session, second_user.user_id, RECIPIENT_USERNAME)
+    return Invite(client=client, sender=me, recipient=second_user, id=await _send(client))
+
+
+# accept
+
+
+async def test_recipient_accepts_a_live_invite(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "active"
+    assert body["starts_on"] == _today().isoformat()
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.ACCEPTED
+    assert row.starts_on == _today()
+
+
+async def test_creator_cannot_accept_their_own_invite(invite: Invite) -> None:
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 404
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+
+
+async def test_non_participant_cannot_accept(invite: Invite, session: AsyncSession) -> None:
+    _switch_user(await _make_user(session))
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 404
+
+
+async def test_accepting_an_expired_invite_is_rejected(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _expire(session, invite.id)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 409
+    assert _code(response) == INVITE_EXPIRED
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+
+
+async def test_accepting_an_already_accepted_invite_is_rejected(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    first = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert first.status_code == 200, first.text
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 409
+    assert _code(response) == INVITE_NOT_PENDING
+    assert "accepted" in response.json()["detail"]["message"]
+
+
+async def test_recipient_at_the_cap_cannot_accept(invite: Invite, session: AsyncSession) -> None:
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_CAP_REACHED
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+    assert row.starts_on is None
+
+
+async def test_recipient_one_under_the_cap_can_accept(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP - 1)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+
+
+async def test_goals_do_not_count_toward_the_challenge_cap(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # One under the cap in challenges, plus a full set of goals - if goals
+    # counted at all, this would be over.
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP - 1)
+    for activity in _FILLER_ACTIVITIES[:4]:
+        session.add(
+            Commitment(
+                creator_id=invite.recipient.user_id,
+                activity=activity,
+                sessions_per_week=3,
+                starts_on=_today(),
+            )
+        )
+    await session.commit()
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+
+
+async def test_only_running_challenges_count_toward_the_cap(
+    invite: Invite, session: AsyncSession
+) -> None:
+    """Quit, finished, and not-yet-answered challenges all leave room."""
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP - 1)
+    sides = {"creator_id": invite.sender.user_id, "recipient_id": invite.recipient.user_id}
+    today = _today()
+    # Quit early.
+    await _insert_challenge(
+        session, **sides, activity="other", starts_on=today - timedelta(days=3), ended_on=today
+    )
+    # Ran its full length - a 1-week challenge is finished on day 7.
+    await _insert_challenge(
+        session, **sides, activity="other", starts_on=today - timedelta(days=7), duration_weeks=1
+    )
+    # Still an unanswered invite.
+    await _insert_challenge(session, **sides, activity="other", invite_status=InviteStatus.PENDING)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+
+
+async def test_starts_on_uses_the_accepters_timezone_not_the_creators(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # 2026-08-09 02:00 UTC is already the 9th in Tokyo (11:00) but still the
+    # 8th in Los Angeles (19:00 PDT).
+    instant = datetime(2026, 8, 9, 2, 0, tzinfo=UTC)
+    for user, timezone in (
+        (invite.sender, "Asia/Tokyo"),
+        (invite.recipient, "America/Los_Angeles"),
+    ):
+        row = await session.get(User, user.user_id)
+        assert row is not None
+        row.timezone = timezone
+        session.add(row)
+    await session.commit()
+    await _update_commitment(session, invite.id, created_at=instant - timedelta(hours=1))
+    _switch_user(invite.recipient)
+
+    with patch.object(dates, "_now", return_value=instant):
+        response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["starts_on"] == "2026-08-08"
+
+
+# decline
+
+
+async def test_recipient_declines_and_the_row_stays(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "declined"
+    assert "starts_on" not in response.json()
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.DECLINED
+
+
+async def test_recipient_at_the_cap_can_still_decline(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "declined"
+
+
+async def test_an_expired_invite_can_be_declined(invite: Invite, session: AsyncSession) -> None:
+    await _expire(session, invite.id)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "declined"
+
+
+async def test_creator_cannot_decline_their_own_invite(invite: Invite) -> None:
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 404
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+
+
+async def test_declining_an_already_declined_invite_is_rejected(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    first = await invite.client.post(f"/commitments/{invite.id}/decline")
+    assert first.status_code == 200, first.text
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 409
+    assert _code(response) == INVITE_NOT_PENDING
+    assert "declined" in response.json()["detail"]["message"]
+
+
+# withdraw / dismiss
+
+
+async def test_creator_withdraws_a_pending_invite(invite: Invite) -> None:
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 204
+    assert await _fetch(invite.id) is None
+
+
+async def test_creator_dismisses_a_declined_invite(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    declined = await invite.client.post(f"/commitments/{invite.id}/decline")
+    assert declined.status_code == 200, declined.text
+    _switch_user(invite.sender)
+
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 204
+    assert await _fetch(invite.id) is None
+
+
+async def test_creator_dismisses_an_expired_invite(invite: Invite, session: AsyncSession) -> None:
+    await _expire(session, invite.id)
+
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 204
+    assert await _fetch(invite.id) is None
+
+
+async def test_recipient_cannot_delete_a_pending_invite(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 404
+    assert await _fetch(invite.id) is not None
+
+
+async def test_creator_cannot_delete_an_accepted_challenge(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    accepted = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert accepted.status_code == 200, accepted.text
+    _switch_user(invite.sender)
+
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_ALREADY_ACCEPTED
+    assert await _fetch(invite.id) is not None
+
+
+async def test_deleting_a_challenge_leaves_completions_intact(
+    invite: Invite, session: AsyncSession, make_completion: Callable[..., Any]
+) -> None:
+    for user in (invite.sender, invite.recipient):
+        await make_completion(session, user_id=user.user_id, on_date=_today(), activity="running")
+
+    response = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert response.status_code == 204
+    async with session_maker() as fresh:
+        remaining = list(await fresh.exec(select(Completion)))
+    assert len(remaining) == 2
+
+
+# races
+
+
+async def test_accepting_a_withdrawn_invite_says_it_is_unavailable(invite: Invite) -> None:
+    withdrawn = await invite.client.delete(f"/commitments/{invite.id}")
+    assert withdrawn.status_code == 204
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 404
+    assert _code(response) == INVITE_UNAVAILABLE
+    assert "withdrawn" in response.json()["detail"]["message"]
+
+
+async def test_simultaneous_accept_and_withdraw_never_both_win(invite: Invite) -> None:
+    """Really concurrent: two requests, two DB sessions, one row. Whichever
+    commits first wins and the other is told what happened.
+    """
+
+    # Both identities have to be live at once, which the usual one-override-
+    # at-a-time switch can't do - so each request names who it is.
+    def by_header(x_test_user: str = Header()) -> CurrentUser:
+        return CurrentUser(user_id=uuid.UUID(x_test_user), email="race@example.com")
+
+    app.dependency_overrides[get_current_user] = by_header
+    as_sender = {"X-Test-User": str(invite.sender.user_id)}
+    as_recipient = {"X-Test-User": str(invite.recipient.user_id)}
+    invite_id = invite.id
+
+    for attempt in range(10):
+        if attempt:
+            invite_id = await _send(invite.client, headers=as_sender)
+        accept = invite.client.post(f"/commitments/{invite_id}/accept", headers=as_recipient)
+        withdraw = invite.client.delete(f"/commitments/{invite_id}", headers=as_sender)
+        # Alternate who is launched first so both orderings get exercised.
+        if attempt % 2:
+            withdrew, accepted = await asyncio.gather(withdraw, accept)
+        else:
+            accepted, withdrew = await asyncio.gather(accept, withdraw)
+
+        row = await _fetch(invite_id)
+        if accepted.status_code == 200:
+            assert withdrew.status_code == 409
+            assert _code(withdrew) == CHALLENGE_ALREADY_ACCEPTED
+            assert row is not None
+            assert row.invite_status == InviteStatus.ACCEPTED
+            # Clear it, or the next round's send is a duplicate.
+            async with session_maker() as fresh:
+                await fresh.delete(await fresh.get(Commitment, row.id))
+                await fresh.commit()
+        else:
+            assert withdrew.status_code == 204
+            assert accepted.status_code == 404
+            assert _code(accepted) == INVITE_UNAVAILABLE
+            assert row is None
+
+
+async def test_simultaneous_accepts_cannot_exceed_the_cap(
+    invite: Invite, session: AsyncSession
+) -> None:
+    """One slot left, two different invites accepted at the same moment -
+    exactly one gets it.
+    """
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP - 1)
+    other_invite_id = await _send(invite.client, activity="stretching_mobility")
+    _switch_user(invite.recipient)
+
+    # Left to chance the two requests rarely overlap, and the test would pass
+    # with no locking at all. So each accept is held right after its count
+    # until the other has counted too - the exact window in which both could
+    # read "one slot left". With the lock in place the second accept can't
+    # reach its count while the first is held, so the first gives up waiting,
+    # commits, and the second then counts a full house.
+    real_count = commitments_router._count_running_challenges
+    counted = 0
+    both_counted = asyncio.Event()
+
+    async def count_then_wait_for_the_other(*args: Any) -> int:
+        nonlocal counted
+        result = await real_count(*args)
+        counted += 1
+        if counted == 2:
+            both_counted.set()
+        try:
+            await asyncio.wait_for(both_counted.wait(), timeout=0.5)
+        except TimeoutError:
+            pass
+        return result
+
+    with patch.object(
+        commitments_router, "_count_running_challenges", count_then_wait_for_the_other
+    ):
+        responses = await asyncio.gather(
+            invite.client.post(f"/commitments/{invite.id}/accept"),
+            invite.client.post(f"/commitments/{other_invite_id}/accept"),
+        )
+
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    rejected = next(r for r in responses if r.status_code == 409)
+    assert _code(rejected) == CHALLENGE_CAP_REACHED
+    async with session_maker() as fresh:
+        accepted = list(
+            await fresh.exec(
+                select(Commitment).where(Commitment.invite_status == InviteStatus.ACCEPTED)
+            )
+        )
+    assert len(accepted) == CHALLENGE_CAP
+
+
+# quit
+
+
+async def _accept(invite: Invite) -> None:
+    """Leaves the recipient as the acting user."""
+    _switch_user(invite.recipient)
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert response.status_code == 200, response.text
+
+
+async def test_creator_quits_an_active_challenge(invite: Invite) -> None:
+    await _accept(invite)
+    _switch_user(invite.sender)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_on"] == _today().isoformat()
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on == _today()
+    assert row.ended_by_id == invite.sender.user_id
+
+
+async def test_recipient_quits_an_active_challenge(invite: Invite) -> None:
+    await _accept(invite)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on == _today()
+    assert row.ended_by_id == invite.recipient.user_id
+
+
+async def test_non_participant_cannot_quit(invite: Invite, session: AsyncSession) -> None:
+    await _accept(invite)
+    _switch_user(await _make_user(session))
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 404
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on is None
+
+
+async def test_quitting_a_pending_invite_is_rejected(invite: Invite) -> None:
+    # Neither side can: the sender withdraws, the recipient declines.
+    for user in (invite.sender, invite.recipient):
+        _switch_user(user)
+
+        response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+        assert response.status_code == 409
+        assert _code(response) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.invite_status == InviteStatus.PENDING
+    assert row.ended_on is None
+    assert row.ended_by_id is None
+
+
+async def test_quitting_an_already_ended_challenge_is_rejected(invite: Invite) -> None:
+    await _accept(invite)
+    first = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert first.status_code == 200, first.text
+    _switch_user(invite.sender)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_NOT_ACTIVE
+    # Whoever quit first stays on record.
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_by_id == invite.recipient.user_id
+
+
+async def test_quitting_a_finished_challenge_is_rejected(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    # 4 weeks long, started 4 weeks ago - today is the first day after it.
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(weeks=4))
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 409
+    assert _code(response) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_on is None
+    assert row.ended_by_id is None
+
+
+async def test_a_quit_challenge_reads_ended_early_for_both_even_past_its_end_date(
+    invite: Invite,
+) -> None:
+    """The ordering rung in derive_status, through a real quit rather than a
+    hand-built row: once enough time passes a quit challenge is also past its
+    original end date, and must not turn into a plain "finished".
+    """
+    await _accept(invite)
+    quit_response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.duration_weeks is not None
+    long_after = _today() + timedelta(weeks=row.duration_weeks + 1)
+    for viewer in (invite.sender, invite.recipient):
+        assert derive_status(row, viewer.user_id, _today()) == CommitmentStatus.ENDED_EARLY
+        assert derive_status(row, viewer.user_id, long_after) == CommitmentStatus.ENDED_EARLY
+
+
+async def test_quitting_at_the_cap_frees_a_slot_for_a_new_invite(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _give_running_challenges(session, invite.recipient, invite.sender, CHALLENGE_CAP)
+    _switch_user(invite.recipient)
+    blocked = await invite.client.post(f"/commitments/{invite.id}/accept")
+    assert blocked.status_code == 409
+    assert _code(blocked) == CHALLENGE_CAP_REACHED
+    async with session_maker() as fresh:
+        running = (
+            await fresh.exec(
+                select(Commitment).where(Commitment.invite_status == InviteStatus.ACCEPTED)
+            )
+        ).first()
+    assert running is not None
+
+    quit_response = await invite.client.post(f"/commitments/{running.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+
+
+async def test_a_quit_challenge_stays_and_neither_participant_can_delete_it(
+    invite: Invite,
+) -> None:
+    await _accept(invite)
+    quit_response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert quit_response.status_code == 200, quit_response.text
+
+    # Including the one who quit.
+    as_recipient = await invite.client.delete(f"/commitments/{invite.id}")
+    _switch_user(invite.sender)
+    as_creator = await invite.client.delete(f"/commitments/{invite.id}")
+
+    assert as_recipient.status_code == 404
+    assert as_creator.status_code == 409
+    assert _code(as_creator) == CHALLENGE_ALREADY_ACCEPTED
+    assert await _fetch(invite.id) is not None
+
+
+async def test_ended_on_uses_the_quitters_timezone(invite: Invite, session: AsyncSession) -> None:
+    # 2026-08-09 02:00 UTC is already the 9th in Tokyo (11:00) but still the
+    # 8th in Los Angeles (19:00 PDT).
+    instant = datetime(2026, 8, 9, 2, 0, tzinfo=UTC)
+    for user, timezone in (
+        (invite.sender, "America/Los_Angeles"),
+        (invite.recipient, "Asia/Tokyo"),
+    ):
+        row = await session.get(User, user.user_id)
+        assert row is not None
+        row.timezone = timezone
+        session.add(row)
+    await session.commit()
+    await _update_commitment(session, invite.id, created_at=instant - timedelta(hours=1))
+
+    with patch.object(dates, "_now", return_value=instant):
+        await _accept(invite)  # by the recipient, in Tokyo
+        _switch_user(invite.sender)
+        response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["starts_on"] == "2026-08-09"
+    assert response.json()["ended_on"] == "2026-08-08"
+
+
+async def test_simultaneous_quits_record_exactly_one_quitter(invite: Invite) -> None:
+    """Both participants quit at the same moment: one does, and the other is
+    told it's already over rather than overwriting who ended it.
+    """
+    await _accept(invite)
+
+    def by_header(x_test_user: str = Header()) -> CurrentUser:
+        return CurrentUser(user_id=uuid.UUID(x_test_user), email="race@example.com")
+
+    app.dependency_overrides[get_current_user] = by_header
+    participants = (invite.sender, invite.recipient)
+
+    # Same trick as the cap race: left to chance the two requests don't
+    # overlap, so each is held just before its commit until the other gets
+    # there too. Without the row lock both would arrive having read "active".
+    # With it, the second can't even read the row while the first is held, so
+    # the first gives up waiting and commits.
+    real_commit = AsyncSession.commit
+    arrived = 0
+    both_arrived = asyncio.Event()
+
+    async def commit_after_waiting_for_the_other(self: AsyncSession) -> None:
+        nonlocal arrived
+        arrived += 1
+        if arrived == 2:
+            both_arrived.set()
+        try:
+            await asyncio.wait_for(both_arrived.wait(), timeout=0.5)
+        except TimeoutError:
+            pass
+        await real_commit(self)
+
+    with patch.object(AsyncSession, "commit", commit_after_waiting_for_the_other):
+        responses = await asyncio.gather(
+            *(
+                invite.client.post(
+                    f"/commitments/{invite.id}/end",
+                    headers={"X-Test-User": str(user.user_id)},
+                )
+                for user in participants
+            )
+        )
+
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    winner = participants[[r.status_code for r in responses].index(200)]
+    rejected = next(r for r in responses if r.status_code == 409)
+    assert _code(rejected) == CHALLENGE_NOT_ACTIVE
+    row = await _fetch(invite.id)
+    assert row is not None
+    assert row.ended_by_id == winner.user_id
+
+
+async def test_a_goal_ended_early_records_its_owner_as_ended_by(
+    authed_client: tuple[AsyncClient, CurrentUser],
+) -> None:
+    client, me = authed_client
+    created = await client.post(
+        "/commitments",
+        json={"activity": "running", "sessions_per_week": 3, "duration_weeks": None},
+    )
+    assert created.status_code == 201, created.text
+
+    response = await client.post(f"/commitments/{created.json()['id']}/end")
+
+    assert response.status_code == 200, response.text
+    row = await _fetch(created.json()["id"])
+    assert row is not None
+    assert row.ended_by_id == me.user_id
+
+
+# list read - who sees a challenge, and in which bucket
+
+
+async def _bucket(invite: Invite, viewer: CurrentUser) -> str | None:
+    """Which bucket of `viewer`'s list the invite under test is in - None if
+    it isn't in their list at all. Leaves `viewer` as the acting user.
+    """
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    found = [
+        bucket
+        for bucket in ("active", "finished")
+        for item in response.json()[bucket]
+        if item["id"] == invite.id
+    ]
+    assert len(found) <= 1, f"listed more than once: {found}"
+    return found[0] if found else None
+
+
+async def _active_ids(invite: Invite, viewer: CurrentUser) -> list[str]:
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    return [item["id"] for item in response.json()["active"]]
+
+
+async def test_creator_sees_a_challenge_they_sent(invite: Invite) -> None:
+    assert await _bucket(invite, invite.sender) == "active"
+
+
+async def test_recipient_sees_a_challenge_sent_to_them(invite: Invite) -> None:
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+async def test_non_participant_sees_neither_side_of_a_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    stranger = await _make_user(session)
+
+    assert await _bucket(invite, stranger) is None
+    response = await invite.client.get("/commitments")
+    assert response.json() == {"active": [], "finished": []}
+
+
+async def test_a_goal_is_still_listed_only_for_its_owner(invite: Invite) -> None:
+    # Widening the scope to recipients must not leak goals: a goal has no
+    # recipient, so nobody but its creator can match it.
+    created = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert created.status_code == 201, created.text
+    goal_id = created.json()["id"]
+
+    assert goal_id in await _active_ids(invite, invite.sender)
+    assert goal_id not in await _active_ids(invite, invite.recipient)
+
+
+async def test_a_listed_goal_has_its_track_and_an_unaccepted_challenge_has_none(
+    invite: Invite,
+) -> None:
+    created = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert created.status_code == 201, created.text
+
+    response = await invite.client.get("/commitments")
+
+    by_id = {item["id"]: item for item in response.json()["active"]}
+    assert len(by_id[created.json()["id"]]["you"]["weeks"]) == 1
+    # Its clock hasn't started, so there is nothing to compute - and nothing
+    # is sent, as opposed to a track with no weeks in it.
+    assert "you" not in by_id[invite.id]
+    assert by_id[invite.id]["them"] == {"username": RECIPIENT_USERNAME}
+
+
+async def test_a_live_pending_challenge_is_active_for_both(invite: Invite) -> None:
+    assert await _bucket(invite, invite.sender) == "active"
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+async def test_a_declined_challenge_is_listed_for_the_creator_only(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+    assert response.status_code == 200, response.text
+
+    # The sender's card is how they find out; the recipient is done with it.
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_an_expired_challenge_is_listed_for_the_creator_only(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _expire(session, invite.id)
+
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_an_active_challenge_is_active_for_both(invite: Invite) -> None:
+    await _accept(invite)
+
+    assert await _bucket(invite, invite.sender) == "active"
+    assert await _bucket(invite, invite.recipient) == "active"
+
+
+@pytest.mark.parametrize("quitter", ["sender", "recipient"])
+async def test_an_ended_early_challenge_is_finished_for_both(invite: Invite, quitter: str) -> None:
+    await _accept(invite)
+    _switch_user(getattr(invite, quitter))
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+    assert response.status_code == 200, response.text
+
+    # Whoever quit, it stays in both lists - unlike a decline.
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) == "finished"
+
+
+async def test_a_challenge_that_ran_its_course_is_finished_for_both(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(weeks=4))
+
+    assert await _bucket(invite, invite.sender) == "finished"
+    assert await _bucket(invite, invite.recipient) == "finished"
+
+
+async def test_crossing_the_expiry_boundary_drops_it_from_the_recipient_only(
+    invite: Invite,
+) -> None:
+    # The row never changes - only the clock does. Day 13 is the last live
+    # day; on day 14 it's the sender's expired card and nothing to the
+    # recipient.
+    row = await _fetch(invite.id)
+    assert row is not None
+
+    with patch.object(
+        dates, "_now", return_value=row.created_at + timedelta(days=INVITE_LIVE_DAYS - 1)
+    ):
+        assert await _bucket(invite, invite.sender) == "active"
+        assert await _bucket(invite, invite.recipient) == "active"
+
+    with patch.object(
+        dates, "_now", return_value=row.created_at + timedelta(days=INVITE_LIVE_DAYS)
+    ):
+        assert await _bucket(invite, invite.sender) == "finished"
+        assert await _bucket(invite, invite.recipient) is None
+
+
+async def test_a_received_invite_sorts_above_newer_active_rows(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # Both made after the invite, so newest-first alone would put them on top.
+    await _insert_challenge(
+        session,
+        creator_id=invite.sender.user_id,
+        recipient_id=invite.recipient.user_id,
+        activity="swimming",
+    )
+    _switch_user(invite.recipient)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    ids = await _active_ids(invite, invite.recipient)
+
+    assert len(ids) == 3
+    assert ids[0] == invite.id
+
+
+async def test_a_sent_invite_sorts_above_newer_active_rows(invite: Invite) -> None:
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "cycling", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    assert await _active_ids(invite, invite.sender) == [invite.id, goal.json()["id"]]
+
+
+# list read - progress and the completions fetch
+
+
+@contextlib.contextmanager
+def _statements() -> Iterator[list[tuple[str, Any]]]:
+    """Every SQL statement sent during the `with` block, with its parameters."""
+    seen: list[tuple[str, Any]] = []
+
+    def _on_execute(_conn, _cursor, statement, parameters, _context, _executemany) -> None:
+        seen.append((statement, parameters))
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", _on_execute)
+    try:
+        yield seen
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", _on_execute)
+
+
+def _reading(statements: list[tuple[str, Any]], table: str) -> list[Any]:
+    """Parameters of each statement that selected from `table`."""
+    return [parameters for statement, parameters in statements if f"FROM {table}" in statement]
+
+
+async def _log(
+    session: AsyncSession, user: CurrentUser, *days_ago: int, activity: str = "running"
+) -> None:
+    for days in days_ago:
+        session.add(
+            Completion(
+                user_id=user.user_id,
+                activity=activity,
+                on_date=_today() - timedelta(days=days),
+                source="standalone",
+                label="Test",
+            )
+        )
+    await session.commit()
+
+
+async def _listed(invite: Invite, viewer: CurrentUser) -> dict[str, Any]:
+    """The invite under test as it appears in `viewer`'s list."""
+    _switch_user(viewer)
+    response = await invite.client.get("/commitments")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return next(item for item in body["active"] + body["finished"] if item["id"] == invite.id)
+
+
+async def _start_ten_days_ago(invite: Invite, session: AsyncSession) -> None:
+    """Accepted, with week 1 behind it and week 2 open: days-ago 10 to 4 are
+    week 1, 3 to today are week 2.
+    """
+    await _accept(invite)
+    await _update_commitment(session, invite.id, starts_on=_today() - timedelta(days=10))
+
+
+async def test_each_participant_is_listed_their_own_track(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 10, 9, 8, 2)
+    await _log(session, invite.recipient, 3)
+
+    as_sender = await _listed(invite, invite.sender)
+    as_recipient = await _listed(invite, invite.recipient)
+
+    assert as_sender["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 3, "met": True, "in_progress": False},
+        {"index": 1, "sessions_done": 1, "met": False, "in_progress": True},
+    ]
+    assert as_recipient["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 0, "met": False, "in_progress": False},
+        {"index": 1, "sessions_done": 1, "met": False, "in_progress": True},
+    ]
+    # One starts_on, one set of weeks - whoever is asking.
+    assert as_sender["starts_on"] == as_recipient["starts_on"]
+    assert as_sender["you"]["weeks_total"] == as_recipient["you"]["weeks_total"] == 4
+
+
+async def test_another_activity_does_not_count_toward_a_listed_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 9, 8, activity="cycling")
+
+    track = (await _listed(invite, invite.sender))["you"]
+
+    assert [week["sessions_done"] for week in track["weeks"]] == [0, 0]
+
+
+async def test_a_goal_does_not_count_completions_fetched_for_an_older_challenge(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # Same person, same activity, so the goal and the challenge draw on the
+    # same slice of the one fetch - and the challenge's window reaches back
+    # ten days before the goal began.
+    await _start_ten_days_ago(invite, session)
+    _switch_user(invite.sender)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "running", "sessions_per_week": 3, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+    await _log(session, invite.sender, 9, 8, 0)
+
+    response = await invite.client.get("/commitments")
+
+    by_id = {item["id"]: item for item in response.json()["active"]}
+    challenge_weeks = by_id[invite.id]["you"]["weeks"]
+    goal_weeks = by_id[goal.json()["id"]]["you"]["weeks"]
+    assert [week["sessions_done"] for week in challenge_weeks] == [2, 1]
+    assert [week["sessions_done"] for week in goal_weeks] == [1]
+
+
+async def test_list_query_count_does_not_grow_with_the_number_of_commitments(
+    invite: Invite, session: AsyncSession
+) -> None:
+    async def goal(activity: str) -> None:
+        response = await invite.client.post(
+            "/commitments", json={"activity": activity, "sessions_per_week": 2, "duration_weeks": 4}
+        )
+        assert response.status_code == 201, response.text
+
+    await _accept(invite)
+    _switch_user(invite.sender)
+    await goal("running")
+    await _log(session, invite.sender, 0)
+    await _log(session, invite.recipient, 0)
+
+    with _statements() as one_of_each:
+        small = await invite.client.get("/commitments")
+    assert len(small.json()["active"]) == 2
+
+    for activity in ("walking", "cycling", "swimming", "cardio"):
+        await _insert_challenge(
+            session,
+            creator_id=invite.sender.user_id,
+            recipient_id=invite.recipient.user_id,
+            activity=activity,
+        )
+        await goal(activity)
+        await _log(session, invite.sender, 0, activity=activity)
+        await _log(session, invite.recipient, 0, activity=activity)
+
+    with _statements() as five_of_each:
+        large = await invite.client.get("/commitments")
+    assert len(large.json()["active"]) == 10
+
+    # One query for the list and one for every completion it needs, whatever
+    # its size - not one per goal and two per challenge.
+    assert len(_reading(five_of_each, "commitments")) == 1
+    assert len(_reading(five_of_each, "completions")) == 1
+    assert len(five_of_each) == len(one_of_each)
+
+
+@pytest.mark.parametrize("state", ["pending", "declined", "expired"])
+async def test_a_never_started_challenge_has_no_track_and_fetches_no_completions(
+    invite: Invite, session: AsyncSession, state: str
+) -> None:
+    if state == "declined":
+        _switch_user(invite.recipient)
+        declined = await invite.client.post(f"/commitments/{invite.id}/decline")
+        assert declined.status_code == 200, declined.text
+    elif state == "expired":
+        await _expire(session, invite.id)
+    # Would count if anything looked - it's the right activity, logged today.
+    await _log(session, invite.sender, 0)
+
+    with _statements() as statements:
+        listed = await _listed(invite, invite.sender)
+
+    assert "starts_on" not in listed
+    assert "you" not in listed
+    assert "track" not in listed["them"]
+    # Nothing in the list has a clock running, so there's nothing to fetch.
+    assert _reading(statements, "completions") == []
+
+
+async def test_a_never_started_challenge_adds_nothing_to_the_completions_query(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # The recipient has one goal of their own, begun today, next to an invite
+    # sent a week ago that they haven't answered.
+    await _update_commitment(session, invite.id, created_at=datetime.now(UTC) - timedelta(days=7))
+    _switch_user(invite.recipient)
+    goal = await invite.client.post(
+        "/commitments", json={"activity": "running", "sessions_per_week": 2, "duration_weeks": 4}
+    )
+    assert goal.status_code == 201, goal.text
+
+    with _statements() as statements:
+        response = await invite.client.get("/commitments")
+    assert len(response.json()["active"]) == 2
+
+    [parameters] = _reading(statements, "completions")
+    flat = list(parameters)
+    # Only the goal's owner, and only the goal's dates: the sender's id and
+    # the week the invite has been waiting are both absent.
+    assert invite.recipient.user_id in flat
+    assert invite.sender.user_id not in flat
+    assert [value for value in flat if isinstance(value, date)] == [_today(), _today()]
+
+
+# oriented read - you and them, and what stays on the server
+
+
+async def test_both_participants_read_the_same_challenge_each_as_you(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    await _log(session, invite.sender, 10, 9, 8, 2)
+    await _log(session, invite.recipient, 3)
+
+    as_sender = await _listed(invite, invite.sender)
+    as_recipient = await _listed(invite, invite.recipient)
+
+    assert as_sender["them"]["username"] == RECIPIENT_USERNAME
+    assert as_recipient["them"]["username"] == SENDER_USERNAME
+    assert [week["sessions_done"] for week in as_sender["you"]["weeks"]] == [3, 1]
+    assert [week["sessions_done"] for week in as_recipient["you"]["weeks"]] == [0, 1]
+    # The same two tracks under swapped labels - nothing recounted per viewer.
+    assert as_sender["you"] == as_recipient["them"]["track"]
+    assert as_sender["them"]["track"] == as_recipient["you"]
+
+
+@pytest.mark.parametrize("quitter", ["sender", "recipient"])
+async def test_ended_by_is_oriented_for_both_participants_after_a_quit(
+    invite: Invite, quitter: str
+) -> None:
+    await _accept(invite)
+    who_quit: CurrentUser = getattr(invite, quitter)
+    other = invite.recipient if quitter == "sender" else invite.sender
+    _switch_user(who_quit)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/end")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ended_by"] == "you"
+    assert (await _listed(invite, who_quit))["ended_by"] == "you"
+    as_other = await _listed(invite, other)
+    assert as_other["ended_by"] == "them"
+    assert as_other["ended_on"] == _today().isoformat()
+    assert as_other["status"] == "ended_early"
+
+
+async def test_an_active_challenge_has_no_ending_fields(invite: Invite) -> None:
+    await _accept(invite)
+
+    listed = await _listed(invite, invite.sender)
+
+    assert "ended_on" not in listed
+    assert "ended_by" not in listed
+
+
+async def test_no_completion_detail_leaves_the_server_for_either_participant(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+    rows = [
+        Completion(
+            user_id=user.user_id,
+            activity="running",
+            value=Decimal("7.77"),
+            unit="miles",
+            on_date=_today() - timedelta(days=days_ago),
+            source="standalone",
+            label=f"LABEL-OF-{name}",
+            note=f"NOTE-OF-{name}",
+        )
+        for user, name, days_ago in (
+            (invite.sender, "SENDER", 9),
+            (invite.recipient, "RECIPIENT", 8),
+        )
+    ]
+    session.add_all(rows)
+    await session.commit()
+    planted = [
+        *(str(row.id) for row in rows),
+        *(row.on_date.isoformat() for row in rows),
+        "LABEL-OF-",
+        "NOTE-OF-",
+        "7.77",
+        "miles",
+        "standalone",
+    ]
+
+    responses = []
+    for viewer in (invite.sender, invite.recipient):
+        _switch_user(viewer)
+        responses.append(await invite.client.get("/commitments"))
+    _switch_user(invite.sender)
+    responses.append(await invite.client.get(f"/commitments/{invite.id}"))
+    responses.append(await invite.client.post(f"/commitments/{invite.id}/end"))
+
+    for response in responses:
+        assert response.status_code == 200, response.text
+        # Each was counted - one session, for each of them...
+        assert response.text.count('"sessions_done":1') == 2
+        # ...and the count is the only trace of it.
+        for secret in planted:
+            assert secret not in response.text, secret
+
+
+async def test_a_listed_challenge_carries_no_user_ids(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _start_ten_days_ago(invite, session)
+
+    for viewer in (invite.sender, invite.recipient):
+        _switch_user(viewer)
+        response = await invite.client.get("/commitments")
+
+        assert str(invite.sender.user_id) not in response.text
+        assert str(invite.recipient.user_id) not in response.text
+
+
+async def test_accept_response_is_oriented_to_the_accepter(
+    invite: Invite, session: AsyncSession
+) -> None:
+    # The sender already trained today, so the moment it's accepted there is
+    # one session on the sender's side and none on the accepter's.
+    await _log(session, invite.sender, 0)
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/accept")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "active"
+    assert body["them"]["username"] == SENDER_USERNAME
+    assert [week["sessions_done"] for week in body["you"]["weeks"]] == [0]
+    assert [week["sessions_done"] for week in body["them"]["track"]["weeks"]] == [1]
+
+
+async def test_decline_response_names_the_sender_and_has_no_tracks(invite: Invite) -> None:
+    _switch_user(invite.recipient)
+
+    response = await invite.client.post(f"/commitments/{invite.id}/decline")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["them"] == {"username": SENDER_USERNAME}
+    assert "you" not in body
+    assert "starts_on" not in body
+
+
+async def test_them_username_follows_a_rename(invite: Invite, session: AsyncSession) -> None:
+    await _accept(invite)
+    assert (await _listed(invite, invite.sender))["them"]["username"] == RECIPIENT_USERNAME
+
+    await _set_username(session, invite.recipient.user_id, "renamed_since")
+
+    # Read off their user row each time - nothing was copied onto the challenge.
+    assert (await _listed(invite, invite.sender))["them"]["username"] == "renamed_since"
+
+
+async def test_listing_any_number_of_challenges_looks_up_names_once(
+    invite: Invite, session: AsyncSession
+) -> None:
+    await _accept(invite)
+    for activity in ("walking", "cycling", "swimming"):
+        await _insert_challenge(
+            session,
+            creator_id=invite.sender.user_id,
+            recipient_id=invite.recipient.user_id,
+            activity=activity,
+        )
+    _switch_user(invite.sender)
+
+    with _statements() as statements:
+        response = await invite.client.get("/commitments")
+    assert len(response.json()["active"]) == 4
+
+    # The caller's own row, then one lookup for everybody else's name.
+    assert len(_reading(statements, "users")) == 2
+
+
+# single read
+
+
+async def test_creator_can_read_a_pending_invite_by_id(invite: Invite) -> None:
+    # No starts_on until it's accepted - the completions lookup must not try
+    # to bound a date window by a NULL.
+    response = await invite.client.get(f"/commitments/{invite.id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "sent"
+    assert "starts_on" not in response.json()
+    assert "you" not in response.json()

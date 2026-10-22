@@ -1,4 +1,4 @@
-"""Integration between the schedule endpoint and completions: 
+"""Integration between the schedule endpoint and completions:
 the schedule response's `completed`/`completion_id` fields, the
 fixed query count regardless of window width, and the cancel/complete
 mutual-exclusion invariant enforced from both directions.
@@ -181,9 +181,7 @@ async def test_standalone_completion_never_affects_the_schedule(
     on_date = plan["starts_on"]
     await make_entry(client, plan["id"], workout_id=workout["id"], on_date=on_date)
 
-    standalone = await client.post(
-        "/completions", json={"activity": "running", "on_date": on_date}
-    )
+    standalone = await client.post("/completions", json={"activity": "running", "on_date": on_date})
     assert standalone.status_code == 201, standalone.text
 
     response = await client.get(

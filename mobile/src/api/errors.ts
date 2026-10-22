@@ -4,21 +4,32 @@ export type ValidationErrorDetail = components['schemas']['ValidationError'];
 
 export type ApiError =
   | { kind: 'unauthorized' }
-  | { kind: 'not_found' }
-  | { kind: 'conflict' }
+  | { kind: 'not_found'; code?: string }
+  | { kind: 'conflict'; code?: string }
   | { kind: 'validation'; detail: ValidationErrorDetail[] }
   | { kind: 'server'; status: number }
   | { kind: 'network' };
+
+/**
+ * Some 404s/409s carry `detail: { code, message }` -- several distinct
+ * conflicts share one status (e.g. a challenge already accepted vs. the
+ * challenge cap), and the code is the only thing that tells them apart.
+ * Left off entirely when absent, so a plain-string detail stays `{ kind }`.
+ */
+function detailCode(body: unknown): { code?: string } {
+  const code = (body as { detail?: { code?: unknown } } | undefined)?.detail?.code;
+  return typeof code === 'string' ? { code } : {};
+}
 
 export function classifyApiError(status: number, body: unknown): ApiError {
   if (status === 401) {
     return { kind: 'unauthorized' };
   }
   if (status === 404) {
-    return { kind: 'not_found' };
+    return { kind: 'not_found', ...detailCode(body) };
   }
   if (status === 409) {
-    return { kind: 'conflict' };
+    return { kind: 'conflict', ...detailCode(body) };
   }
   if (status === 422) {
     // FastAPI's 422s come in two shapes: pydantic validation failures give

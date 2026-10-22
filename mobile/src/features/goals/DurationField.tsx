@@ -7,13 +7,15 @@ import { fieldStyles } from '@/features/logs/fieldStyles';
 import type { GoalDuration } from './goalForm';
 import { MAX_DURATION_WEEKS, MIN_DURATION_WEEKS } from './goalForm';
 
-/** "For": Weeks (default, with a 1-8 stepper) or Ongoing. */
+/** "For": Weeks (default, with a 1-8 stepper) or Ongoing. Ongoing greys out for a challenge, which must be fixed-length. */
 export function DurationField({
   duration,
   onChange,
+  ongoingDisabled = false,
 }: {
   duration: GoalDuration;
   onChange: (duration: GoalDuration) => void;
+  ongoingDisabled?: boolean;
 }) {
   const weeks = duration.kind === 'weeks' ? duration.weeks : MIN_DURATION_WEEKS;
 
@@ -32,10 +34,19 @@ export function DurationField({
         <TouchableOpacity
           style={[styles.toggle, duration.kind === 'ongoing' && styles.toggleActive]}
           onPress={() => onChange({ kind: 'ongoing' })}
+          disabled={ongoingDisabled}
           accessibilityRole="button"
-          accessibilityState={{ selected: duration.kind === 'ongoing' }}
+          accessibilityState={{ selected: duration.kind === 'ongoing', disabled: ongoingDisabled }}
         >
-          <Text style={[styles.toggleText, duration.kind === 'ongoing' && styles.toggleTextActive]}>Ongoing</Text>
+          <Text
+            style={[
+              styles.toggleText,
+              duration.kind === 'ongoing' && styles.toggleTextActive,
+              ongoingDisabled && styles.toggleTextDisabled,
+            ]}
+          >
+            Ongoing
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -91,6 +102,9 @@ const styles = StyleSheet.create({
   },
   toggleTextActive: {
     color: colors.background,
+  },
+  toggleTextDisabled: {
+    color: colors.textMuted,
   },
   stepperRow: {
     flexDirection: 'row',

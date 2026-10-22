@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -499,15 +500,49 @@ async def test_duplicate_username_violates_unique_index(session: AsyncSession) -
     await session.commit()
 
     duplicate = User(id=uuid.uuid4(), email="b@example.com", username="sam")
-    await _assert_violates(session, duplicate, "ix_users_username")
+    await _assert_violates(session, duplicate, "uq_users_username_lower")
 
 
-async def test_uppercase_username_violates_format_check(session: AsyncSession) -> None:
-    """PATCH /me lowercases before this is ever reached - this is the backstop
-    for anything that writes the column directly instead.
+async def test_uppercase_username_passes_format_check(session: AsyncSession) -> None:
+    """Usernames are stored as typed, so the format check has to let uppercase
+    through - written to the column directly, the same way the backstop tests
+    around it are.
     """
     user = User(id=uuid.uuid4(), email="uppercase@example.com", username="AB1")
-    await _assert_violates(session, user, "ck_users_username_format")
+    session.add(user)
+    await session.commit()
+
+    await session.refresh(user)
+    assert user.username == "AB1"
+
+
+async def test_multiple_null_usernames_coexist(session: AsyncSession) -> None:
+    """NULLs are distinct in a unique index, so uq_users_username_lower needs
+    no partial WHERE - every account starts without a username, and they must
+    not collide with each other.
+    """
+    session.add(User(id=uuid.uuid4(), email="a@example.com"))
+    session.add(User(id=uuid.uuid4(), email="b@example.com"))
+    await session.commit()
+
+    unclaimed = (await session.exec(select(User).where(User.username.is_(None)))).all()
+    assert len(unclaimed) == 2
+
+
+async def test_lower_username_lookup_finds_mixed_case_row(session: AsyncSession) -> None:
+    """No endpoint looks a user up by username yet (that arrives with
+    challenge send) - this is the query shape it will have to use to match
+    without case and hit uq_users_username_lower.
+    """
+    user = User(id=uuid.uuid4(), email="mixed@example.com", username="TestUser")
+    session.add(user)
+    await session.commit()
+
+    found = (
+        await session.exec(select(User).where(func.lower(User.username) == "TESTUSER".lower()))
+    ).one()
+    assert found.id == user.id
+    assert found.username == "TestUser"
 
 
 async def test_too_short_username_violates_format_check(session: AsyncSession) -> None:

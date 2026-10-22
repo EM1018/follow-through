@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Alert,
@@ -19,6 +20,7 @@ import { Skeleton } from '@/components/Skeleton';
 import { useActivities, type Activity, type ActivityInfo } from '@/features/logs/activities';
 import { ActivityPickerSheet } from '@/features/logs/ActivityPickerSheet';
 import { SelectField } from '@/features/logs/SelectField';
+import { useMe } from '@/features/profile/me';
 import { ScheduleErrorState } from '@/features/schedule/ScheduleErrorState';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
@@ -30,10 +32,14 @@ import {
   canSaveGoal,
   defaultGoalForm,
   goalSummarySentence,
+  isChallengeForm,
   resetAmountForActivity,
+  withSendTo,
   type GoalForm,
 } from './goalForm';
 import { sessionsPerWeekLabel } from './goalTerms';
+import { checkSendTo, sendToProblemFromError, type SendToProblem } from './sendTo';
+import { SendToField } from './SendToField';
 import { SessionsPickerSheet } from './SessionsPickerSheet';
 
 export type NewGoalSheetProps = {
@@ -48,6 +54,12 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
   const [form, setForm] = useState<GoalForm>(defaultGoalForm());
   const [activityPickerOpen, setActivityPickerOpen] = useState(false);
   const [sessionsPickerOpen, setSessionsPickerOpen] = useState(false);
+  // What blur (or Save) found wrong with "Send to" -- cleared on the next keystroke.
+  const [sendToCheck, setSendToCheck] = useState<SendToProblem | null>(null);
+
+  // undefined until /me lands: the checks that need it wait for the server instead.
+  const meQuery = useMe();
+  const myUsername = meQuery.data === undefined ? undefined : meQuery.data.username;
 
   const activitiesQuery = useActivities();
   const activities = activitiesQuery.data?.activities ?? EMPTY_ACTIVITIES;
@@ -59,19 +71,49 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
   const activitiesLoading = activitiesQuery.isLoading && !hasActivitiesData;
   const canInteract = !activitiesLoading && !activitiesQuery.isError;
 
-  const isDirty = form.activity !== null;
+  const isChallenge = isChallengeForm(form);
+  const isDirty = form.activity !== null || isChallenge;
 
   const saveMutation = useMutation<CommitmentRead, ApiError, void>({
     mutationFn: () => createCommitment(buildGoalCreatePayload(form)),
     onSuccess: (commitment) => onSaved(commitment),
   });
 
+  // A failed send that's about the recipient belongs on the field, not in the general error box.
+  const serverSendToProblem = saveMutation.isError ? sendToProblemFromError(saveMutation.error) : null;
+  const sendToProblem = serverSendToProblem ?? sendToCheck;
+
+  function handleSendToChange(sendTo: string) {
+    setForm((prev) => withSendTo(prev, sendTo));
+    setSendToCheck(null);
+    // The last server answer described the old name, not this one.
+    if (saveMutation.isError) {
+      saveMutation.reset();
+    }
+  }
+
+  function handleSave() {
+    // Same check as blur -- tapping Save doesn't reliably blur the field first.
+    const problem = checkSendTo(form.sendTo, myUsername);
+    if (problem) {
+      setSendToCheck(problem);
+      return;
+    }
+    saveMutation.mutate();
+  }
+
+  function handleGoToProfile() {
+    // The sheet is a modal over the Goals tab; it has to go before Profile can show.
+    onClose();
+    router.push('/(app)/(tabs)/profile');
+  }
+
   function handleDismiss() {
     if (saveMutation.isPending) {
       return;
     }
     if (isDirty) {
-      Alert.alert('Discard this goal?', 'Your changes will be lost.', [
+      Alert.alert(isChallenge ? 'Discard this challenge?' : 'Discard this goal?', 'Your changes will be lost.', [
         { text: 'Keep editing', style: 'cancel' },
         { text: 'Discard', style: 'destructive', onPress: onClose },
       ]);
@@ -125,7 +167,7 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
           <Pressable style={styles.sheetWrap} onPress={() => {}}>
             <Card style={styles.sheet}>
               <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent}>
-                <Text style={styles.title}>New goal</Text>
+                <Text style={styles.title}>{isChallenge ? 'New challenge' : 'New goal'}</Text>
 
                 {activitiesLoading ? (
                   <View style={styles.loadingRows}>
@@ -165,6 +207,15 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
                     <DurationField
                       duration={form.duration}
                       onChange={(duration) => setForm((prev) => ({ ...prev, duration }))}
+                      ongoingDisabled={isChallenge}
+                    />
+
+                    <SendToField
+                      value={form.sendTo}
+                      onChange={handleSendToChange}
+                      onBlur={() => setSendToCheck(checkSendTo(form.sendTo, myUsername))}
+                      problem={sendToProblem}
+                      onGoToProfile={handleGoToProfile}
                     />
 
                     {summary ? (
@@ -173,7 +224,7 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
                       </View>
                     ) : null}
 
-                    {saveMutation.isError ? (
+                    {saveMutation.isError && serverSendToProblem === null ? (
                       <ScheduleErrorState error={saveMutation.error} onRetry={() => saveMutation.mutate()} />
                     ) : null}
                   </>
@@ -191,7 +242,7 @@ export function NewGoalSheet({ onClose, onSaved }: NewGoalSheetProps) {
                 <Button
                   label="Save"
                   variant="primary"
-                  onPress={() => saveMutation.mutate()}
+                  onPress={handleSave}
                   disabled={!canInteract || !isValid}
                   loading={saveMutation.isPending}
                   style={styles.footerButton}

@@ -22,6 +22,26 @@ describe('classifyApiError / describeApiError for 422s', () => {
   });
 });
 
+describe('classifyApiError error codes', () => {
+  it("keeps a 409's detail.code so distinct conflicts can be told apart", () => {
+    expect(classifyApiError(409, { detail: { code: 'challenge_cap_reached', message: 'x' } })).toEqual({
+      kind: 'conflict',
+      code: 'challenge_cap_reached',
+    });
+  });
+
+  it("keeps a 404's detail.code", () => {
+    expect(classifyApiError(404, { detail: { code: 'invite_unavailable', message: 'x' } })).toEqual({
+      kind: 'not_found',
+      code: 'invite_unavailable',
+    });
+  });
+
+  it('leaves code off for a plain-string detail', () => {
+    expect(classifyApiError(404, { detail: 'Commitment not found' })).toEqual({ kind: 'not_found' });
+  });
+});
+
 describe('classifyApiError for 409s', () => {
   it('classifies as conflict, not server', () => {
     const error = classifyApiError(409, { detail: 'A completion already exists for this entry on this date' });

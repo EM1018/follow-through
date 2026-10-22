@@ -1,23 +1,23 @@
 import type { CommitmentRead } from './commitments';
+import { ownTrack } from './goalShape';
 import { goalTermsLine } from './goalTerms';
 
 export type GoalVariant = 'active' | 'finished';
 
-type PositionInput = Pick<CommitmentRead, 'duration_weeks'> & {
-  progress: Pick<CommitmentRead['progress'], 'blocks' | 'weeks_passed' | 'weeks_total'>;
-};
+type PositionInput = Pick<CommitmentRead, 'id' | 'you' | 'duration_weeks'>;
 
 function positionLabel(commitment: PositionInput, variant: GoalVariant): string {
+  const track = ownTrack(commitment);
   if (variant === 'finished') {
-    return `${commitment.progress.weeks_passed} of ${commitment.progress.weeks_total} weeks passed`;
+    return `${track.weeks_passed} of ${track.weeks_total} weeks passed`;
   }
   if (commitment.duration_weeks === null) {
     return 'ongoing';
   }
-  // The last block is always the current one -- same reasoning as GoalCard's
-  // currentBlock: only the most recent block can ever be in progress.
-  const blocks = commitment.progress.blocks;
-  const currentIndex = blocks.length > 0 ? blocks[blocks.length - 1].index : 0;
+  // The last week is always the current one -- same reasoning as GoalCard's
+  // currentWeek: only the most recent week can ever be in progress.
+  const weeks = track.weeks;
+  const currentIndex = weeks.length > 0 ? weeks[weeks.length - 1].index : 0;
   return `week ${currentIndex + 1} of ${commitment.duration_weeks}`;
 }
 

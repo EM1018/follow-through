@@ -62,23 +62,18 @@ async def test_create_goal_with_target(authed_client: tuple[AsyncClient, Current
     assert body["target_unit"] == "minutes"
     assert body["sessions_per_week"] == 3
     assert body["duration_weeks"] is None
-    assert body["recipient_id"] is None
-    assert body["invite_status"] is None
-    # A goal always starts today, so its first (in-progress) block exists
-    # immediately - "empty" means zero sessions logged so far, not zero blocks.
-    assert body["progress"]["blocks"] == [
-        {
-            "index": 0,
-            "starts_on": _today(),
-            "ends_on": body["progress"]["blocks"][0]["ends_on"],
-            "sessions_done": 0,
-            "sessions_required": 3,
-            "status": "in_progress",
-        }
+    assert body["status"] == "active"
+    # Nobody on the other side - that's what makes it a goal.
+    assert "them" not in body
+    assert body["starts_on"] == _today()
+    # A goal always starts today, so its first (in-progress) week exists
+    # immediately - "empty" means zero sessions logged so far, not zero weeks.
+    assert body["you"]["weeks"] == [
+        {"index": 0, "sessions_done": 0, "met": False, "in_progress": True}
     ]
-    assert body["progress"]["current_streak"] == 0
-    assert body["progress"]["longest_streak"] == 0
-    assert body["progress"]["weeks_passed"] == 0
+    assert body["you"]["current_streak"] == 0
+    assert body["you"]["longest_streak"] == 0
+    assert body["you"]["weeks_passed"] == 0
 
 
 async def test_starts_on_uses_the_users_own_timezone_not_utc(
@@ -145,9 +140,7 @@ async def test_target_unit_not_permitted_for_activity_is_422(
 ) -> None:
     client, _me = authed_client
     # strength_training only permits minutes/hours/sets/reps - miles isn't one.
-    payload = _commitment_payload(
-        activity="strength_training", target_value=5, target_unit="miles"
-    )
+    payload = _commitment_payload(activity="strength_training", target_value=5, target_unit="miles")
 
     response = await client.post("/commitments", json=payload)
     assert response.status_code == 422
@@ -282,9 +275,9 @@ async def test_logged_completions_feed_goal_progress(
 
     response = await client.get(f"/commitments/{commitment_id}")
     assert response.status_code == 200
-    blocks = response.json()["progress"]["blocks"]
-    assert len(blocks) == 1
-    assert blocks[0]["sessions_done"] == 1
+    weeks = response.json()["you"]["weeks"]
+    assert len(weeks) == 1
+    assert weeks[0]["sessions_done"] == 1
 
 
 async def test_non_matching_completion_is_excluded_from_progress(
@@ -316,8 +309,8 @@ async def test_non_matching_completion_is_excluded_from_progress(
 
     response = await client.get(f"/commitments/{commitment_id}")
     assert response.status_code == 200
-    blocks = response.json()["progress"]["blocks"]
-    assert blocks[0]["sessions_done"] == 0
+    weeks = response.json()["you"]["weeks"]
+    assert weeks[0]["sessions_done"] == 0
 
     result = await session.exec(select(Completion).where(Completion.id == not_matching_id))
     assert result.one().user_id == me.user_id
@@ -348,9 +341,7 @@ async def test_ending_a_fixed_length_goal_early_works_the_same_way(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=8)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=8))
     commitment_id = created.json()["id"]
 
     response = await client.post(f"/commitments/{commitment_id}/end")
@@ -390,14 +381,12 @@ async def test_ending_a_goal_already_finished_by_duration_is_409(
     authed_client: tuple[AsyncClient, CurrentUser], session: AsyncSession
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=1)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=1))
     commitment_id = created.json()["id"]
 
     # Force it into "already finished" territory - duration_weeks=1 means the
     # single block's last day is starts_on + 6; back-date starts_on so that's
-    # already in the past, the same way _is_finished checks it.
+    # already in the past, the same way derive_status checks it.
     commitment = await session.get(Commitment, uuid.UUID(commitment_id))
     commitment.starts_on = commitment.starts_on - timedelta(days=30)
     session.add(commitment)
@@ -429,9 +418,7 @@ async def test_ending_does_not_change_duration_weeks(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=8)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=8))
     commitment_id = created.json()["id"]
 
     response = await client.post(f"/commitments/{commitment_id}/end")

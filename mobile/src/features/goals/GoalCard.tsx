@@ -3,10 +3,15 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Card } from '@/components/Card';
 import { colors, fontSize, fontWeight, heroFontSize, segmentBar, spacing } from '@/theme';
 
-import { circlesFor } from './circles';
+import { QuitAction } from './ChallengeActions';
+import { ChallengeTracks } from './ChallengeTracks';
+import { challengeRows, circlesFor } from './circles';
 import type { CommitmentRead } from './commitments';
 import { GoalCircles } from './GoalCircles';
+import { challengeThemLabel, ENDED_EARLY_HEADER, endedEarlyLine } from './goalCopy';
+import { isGoal, isUnstarted, ownTrack } from './goalShape';
 import { finishedWeekLabel, goalTermsLine, streakLabel } from './goalTerms';
+import { UnstartedChallengeCard } from './UnstartedChallengeCard';
 
 type GoalCardProps = {
   commitment: CommitmentRead;
@@ -14,6 +19,8 @@ type GoalCardProps = {
   activityDisplayName: string;
   expanded: boolean;
   onPress: () => void;
+  /** At the challenge cap: an invite card's Accept renders disabled. */
+  acceptBlocked?: boolean;
 };
 
 /**
@@ -23,29 +30,72 @@ type GoalCardProps = {
  * and finished expanded layouts differ -- the collapsed row is identical
  * either way, since it never shows a hero number to begin with.
  */
-export function GoalCard({ commitment, variant, activityDisplayName, expanded, onPress }: GoalCardProps) {
-  const { progress } = commitment;
-  // The last returned block is always "this week" for an active goal -- only
-  // the most recent block can ever be in_progress, everything before it is
+export function GoalCard({
+  commitment,
+  variant,
+  activityDisplayName,
+  expanded,
+  onPress,
+  acceptBlocked = false,
+}: GoalCardProps) {
+  // A challenge that never started has no track to draw -- branch it off
+  // before anything below asks for one.
+  if (isUnstarted(commitment)) {
+    return (
+      <UnstartedChallengeCard
+        commitment={commitment}
+        activityDisplayName={activityDisplayName}
+        acceptBlocked={acceptBlocked}
+      />
+    );
+  }
+
+  const track = ownTrack(commitment);
+  // The last returned week is always "this week" for an active goal -- only
+  // the most recent week can ever be in_progress, everything before it is
   // necessarily closed.
-  const currentBlock = progress.blocks[progress.blocks.length - 1] ?? null;
-  const circles = circlesFor(progress.blocks, commitment.duration_weeks);
+  const currentWeek = track.weeks[track.weeks.length - 1] ?? null;
+  // Every week of a commitment asks for the same count, so it lives on the row, not the week.
+  const sessionsRequired = commitment.sessions_per_week;
+  const circles = circlesFor(track.weeks, commitment.duration_weeks);
+
+  // A challenge is the row with `them`; its second row needs their track,
+  // which a not-yet-started challenge doesn't carry -- so this keys on the
+  // track, not on `them` alone. you/them order is the server's orientation:
+  // nothing here looks at ids or who created it.
+  const them = isGoal(commitment) ? null : commitment.them;
+  const challenge = them?.track
+    ? { rows: challengeRows(track, them.track), themLabel: challengeThemLabel(them.username) }
+    : null;
+  const subject = challenge ? `challenge with ${challenge.themLabel}` : 'goal';
+  // Status is the server's -- read, never derived from dates. Goals and
+  // challenges both get this: "Week 6 of 6" on something ended in week 2 is wrong either way.
+  const endedEarlyBy =
+    commitment.status === 'ended_early' ? endedEarlyLine(commitment, challenge?.themLabel ?? null) : null;
+
+  function weekRows(size: 'normal' | 'mini') {
+    return challenge ? (
+      <ChallengeTracks you={challenge.rows.you} them={challenge.rows.them} themLabel={challenge.themLabel} size={size} />
+    ) : (
+      <GoalCircles statuses={circles} size={size} />
+    );
+  }
 
   if (!expanded) {
     return (
       <TouchableOpacity
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={`${activityDisplayName} goal`}
+        accessibilityLabel={`${activityDisplayName} ${subject}`}
       >
         <Card style={styles.collapsedCard}>
           <Text style={styles.name} numberOfLines={1}>
             {activityDisplayName}
           </Text>
-          <GoalCircles statuses={circles} size="mini" />
-          {currentBlock ? (
+          {weekRows('mini')}
+          {currentWeek ? (
             <Text style={styles.collapsedCount}>
-              {currentBlock.sessions_done}/{currentBlock.sessions_required}
+              {currentWeek.sessions_done}/{sessionsRequired}
             </Text>
           ) : null}
         </Card>
@@ -57,7 +107,7 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
     <TouchableOpacity
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${activityDisplayName} goal, expanded`}
+      accessibilityLabel={`${activityDisplayName} ${subject}, expanded`}
     >
       <Card style={styles.expandedCard}>
         {variant === 'active' ? (
@@ -67,17 +117,17 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
               <Text style={styles.headerRight}>{goalTermsLine(commitment)}</Text>
             </View>
 
-            {currentBlock ? (
+            {currentWeek ? (
               <>
                 <View style={styles.hero}>
-                  <Text style={styles.heroNumber}>{currentBlock.sessions_done}</Text>
-                  <Text style={styles.heroSuffix}>of {currentBlock.sessions_required} this week</Text>
+                  <Text style={styles.heroNumber}>{currentWeek.sessions_done}</Text>
+                  <Text style={styles.heroSuffix}>of {sessionsRequired} this week</Text>
                 </View>
                 <View style={styles.segmentRow}>
-                  {Array.from({ length: currentBlock.sessions_required }, (_, index) => (
+                  {Array.from({ length: sessionsRequired }, (_, index) => (
                     <View
                       key={index}
-                      style={[styles.segment, index < currentBlock.sessions_done && styles.segmentFilled]}
+                      style={[styles.segment, index < currentWeek.sessions_done && styles.segmentFilled]}
                     />
                   ))}
                 </View>
@@ -85,21 +135,27 @@ export function GoalCard({ commitment, variant, activityDisplayName, expanded, o
             ) : null}
 
             <View style={styles.divider} />
-            <GoalCircles statuses={circles} size="normal" />
-            <Text style={styles.streak}>{streakLabel(progress.current_streak)}</Text>
+            {weekRows('normal')}
+            <Text style={styles.streak}>{streakLabel(track.current_streak)}</Text>
+            {challenge && commitment.status === 'active' ? (
+              <QuitAction commitmentId={commitment.id} themLabel={challenge.themLabel} />
+            ) : null}
           </>
         ) : (
           <>
             <View style={styles.headerRow}>
               <Text style={styles.name}>{activityDisplayName}</Text>
-              {commitment.duration_weeks !== null ? (
+              {endedEarlyBy ? (
+                <Text style={styles.headerRight}>{ENDED_EARLY_HEADER}</Text>
+              ) : commitment.duration_weeks !== null ? (
                 <Text style={styles.headerRight}>{finishedWeekLabel(commitment.duration_weeks)}</Text>
               ) : null}
             </View>
             <Text style={styles.subtitle}>{goalTermsLine(commitment)}</Text>
-            <GoalCircles statuses={circles} size="normal" />
+            {endedEarlyBy ? <Text style={styles.subtitle}>{endedEarlyBy}</Text> : null}
+            {weekRows('normal')}
             <View style={styles.divider} />
-            <Text style={styles.streak}>{streakLabel(progress.current_streak)}</Text>
+            <Text style={styles.streak}>{streakLabel(track.current_streak)}</Text>
           </>
         )}
       </Card>

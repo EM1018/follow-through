@@ -68,9 +68,7 @@ def test_exact_unit_value_below_target_does_not_match() -> None:
 
 
 def test_cross_unit_with_conversion_factor_matches() -> None:
-    commitment = _commitment(
-        starts_on=date(2026, 1, 5), target_value="5", target_unit="kilometers"
-    )
+    commitment = _commitment(starts_on=date(2026, 1, 5), target_value="5", target_unit="kilometers")
     completion = _completion(on_date=date(2026, 1, 5), value="3.2", unit="miles")
     assert completion_satisfies(commitment, completion) is True
 
@@ -180,9 +178,7 @@ def test_block_containing_today_short_of_target_is_in_progress() -> None:
     starts_on = date(2026, 1, 5)
     commitment = _commitment(starts_on=starts_on, sessions_per_week=5)
     completion = _completion(on_date=starts_on)
-    progress = compute_progress(
-        commitment, [completion], today=starts_on + timedelta(days=3)
-    )
+    progress = compute_progress(commitment, [completion], today=starts_on + timedelta(days=3))
     assert progress.blocks[0].status == BlockStatus.IN_PROGRESS
 
 

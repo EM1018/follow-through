@@ -55,8 +55,50 @@ export interface paths {
         get: operations["get_commitment_commitments__commitment_id__get"];
         put?: never;
         post?: never;
-        /** Delete Commitment */
+        /**
+         * Delete Commitment
+         * @description One verb, three meanings, told apart by the row's state: deleting a
+         *     goal, withdrawing an invite nobody has answered, and dismissing the
+         *     declined or expired card left behind by one that went nowhere.
+         *
+         *     Creator-only in every case. The recipient has no card of their own to
+         *     clear - one row holds both sides - so for them this is a 404.
+         */
         delete: operations["delete_commitment_commitments__commitment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commitments/{commitment_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Challenge */
+        post: operations["accept_challenge_commitments__commitment_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commitments/{commitment_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decline Challenge */
+        post: operations["decline_challenge_commitments__commitment_id__decline_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -301,84 +343,30 @@ export interface components {
             /** Units */
             units: components["schemas"]["Unit"][];
         };
-        /** BlockRead */
-        BlockRead: {
-            /**
-             * Ends On
-             * Format: date
-             */
-            ends_on: string;
-            /** Index */
-            index: number;
-            /** Sessions Done */
-            sessions_done: number;
-            /** Sessions Required */
-            sessions_required: number;
-            /**
-             * Starts On
-             * Format: date
-             */
-            starts_on: string;
-            status: components["schemas"]["BlockStatus"];
-        };
-        /**
-         * BlockStatus
-         * @enum {string}
-         */
-        BlockStatus: "passed" | "in_progress" | "missed";
         /** CommitmentCreate */
         CommitmentCreate: {
             activity: components["schemas"]["Activity"];
             /** Duration Weeks */
             duration_weeks?: number | null;
+            /** Recipient Username */
+            recipient_username?: string | null;
             /** Sessions Per Week */
             sessions_per_week: number;
             target_unit?: components["schemas"]["Unit"] | null;
             /** Target Value */
             target_value?: number | string | null;
         };
-        /** CommitmentRead */
-        CommitmentRead: {
-            activity: components["schemas"]["Activity"];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Creator Id
-             * Format: uuid
-             */
-            creator_id: string;
-            /** Duration Weeks */
-            duration_weeks: number | null;
-            /** Ended On */
-            ended_on: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            invite_status: components["schemas"]["InviteStatus"] | null;
-            progress: components["schemas"]["ProgressRead"];
-            /** Recipient Id */
-            recipient_id: string | null;
-            /** Rematch Of Id */
-            rematch_of_id: string | null;
-            /** Sessions Per Week */
-            sessions_per_week: number;
-            /** Starts On */
-            starts_on: string | null;
-            target_unit: components["schemas"]["Unit"] | null;
-            /** Target Value */
-            target_value: number | null;
-        };
+        /**
+         * CommitmentStatus
+         * @enum {string}
+         */
+        CommitmentStatus: "declined" | "sent" | "invite" | "expired" | "ended_early" | "finished" | "active";
         /** CommitmentsListResponse */
         CommitmentsListResponse: {
             /** Active */
-            active: components["schemas"]["CommitmentRead"][];
+            active: components["schemas"]["OrientedCommitmentRead"][];
             /** Finished */
-            finished: components["schemas"]["CommitmentRead"][];
+            finished: components["schemas"]["OrientedCommitmentRead"][];
         };
         /** CompletionCreate */
         CompletionCreate: {
@@ -479,6 +467,11 @@ export interface components {
          */
         Dimension: "time" | "distance" | "count";
         /**
+         * EndedBy
+         * @enum {string}
+         */
+        EndedBy: "you" | "them";
+        /**
          * EntryRefRead
          * @description Minimal reference to another entry - used both for what a substitution
          *     replaced and what a cancellation cancelled, since both need exactly the
@@ -505,15 +498,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /**
-         * InviteStatus
-         * @description Challenge-only - stays NULL for every goal (see ck_commitments_goal_shape).
-         *     Nothing writes this until Stage 3 wires up the invite flow; the column and
-         *     its native Postgres enum type exist now so that stage needs no migration
-         *     of its own.
-         * @enum {string}
-         */
-        InviteStatus: "pending" | "accepted" | "declined";
         /** MeRead */
         MeRead: {
             /**
@@ -539,6 +523,39 @@ export interface components {
             timezone?: string | null;
             /** Username */
             username?: string | null;
+        };
+        /**
+         * OrientedCommitmentRead
+         * @description A goal or a challenge, as the caller sees it. One shape for both: a
+         *     goal is the one with no `them`.
+         */
+        OrientedCommitmentRead: {
+            activity: components["schemas"]["Activity"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Duration Weeks */
+            duration_weeks: number | null;
+            ended_by?: components["schemas"]["EndedBy"] | null;
+            /** Ended On */
+            ended_on?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Sessions Per Week */
+            sessions_per_week: number;
+            /** Starts On */
+            starts_on?: string | null;
+            status: components["schemas"]["CommitmentStatus"];
+            target_unit: components["schemas"]["Unit"] | null;
+            /** Target Value */
+            target_value: number | null;
+            them?: components["schemas"]["ThemRead"] | null;
+            you?: components["schemas"]["TrackRead"] | null;
         };
         /** PlanCreate */
         PlanCreate: {
@@ -605,19 +622,6 @@ export interface components {
             starts_on?: string | null;
             /** Visible To Friends */
             visible_to_friends?: boolean | null;
-        };
-        /** ProgressRead */
-        ProgressRead: {
-            /** Blocks */
-            blocks: components["schemas"]["BlockRead"][];
-            /** Current Streak */
-            current_streak: number;
-            /** Longest Streak */
-            longest_streak: number;
-            /** Weeks Passed */
-            weeks_passed: number;
-            /** Weeks Total */
-            weeks_total: number;
         };
         /** ResolvedEntryRead */
         ResolvedEntryRead: {
@@ -711,6 +715,28 @@ export interface components {
             };
         };
         /**
+         * ThemRead
+         * @description The other participant in a challenge.
+         */
+        ThemRead: {
+            track?: components["schemas"]["TrackRead"] | null;
+            /** Username */
+            username: string | null;
+        };
+        /** TrackRead */
+        TrackRead: {
+            /** Current Streak */
+            current_streak: number;
+            /** Longest Streak */
+            longest_streak: number;
+            /** Weeks */
+            weeks: components["schemas"]["WeekRead"][];
+            /** Weeks Passed */
+            weeks_passed: number;
+            /** Weeks Total */
+            weeks_total: number;
+        };
+        /**
          * Unit
          * @enum {string}
          */
@@ -732,6 +758,23 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WeekRead
+         * @description One week of one person's track: how many sessions counted, and how the
+         *     week stands. This is all of someone's training that ever leaves the
+         *     server - never the completions behind the count (their dates, amounts,
+         *     notes, or ids).
+         */
+        WeekRead: {
+            /** In Progress */
+            in_progress: boolean;
+            /** Index */
+            index: number;
+            /** Met */
+            met: boolean;
+            /** Sessions Done */
+            sessions_done: number;
         };
         /** WorkoutCreate */
         WorkoutCreate: {
@@ -840,7 +883,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommitmentRead"];
+                    "application/json": components["schemas"]["OrientedCommitmentRead"];
                 };
             };
             /** @description Validation Error */
@@ -871,7 +914,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommitmentRead"];
+                    "application/json": components["schemas"]["OrientedCommitmentRead"];
                 };
             };
             /** @description Validation Error */
@@ -914,6 +957,68 @@ export interface operations {
             };
         };
     };
+    accept_challenge_commitments__commitment_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commitment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrientedCommitmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_challenge_commitments__commitment_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commitment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrientedCommitmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     end_commitment_commitments__commitment_id__end_post: {
         parameters: {
             query?: never;
@@ -931,7 +1036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommitmentRead"];
+                    "application/json": components["schemas"]["OrientedCommitmentRead"];
                 };
             };
             /** @description Validation Error */

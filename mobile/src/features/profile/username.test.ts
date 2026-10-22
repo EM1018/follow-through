@@ -1,10 +1,4 @@
-import { isValidUsernameFormat, lowercaseUsername } from './username';
-
-describe('lowercaseUsername', () => {
-  it('lowercases as typed', () => {
-    expect(lowercaseUsername('Jordan_R')).toBe('jordan_r');
-  });
-});
+import { isValidUsernameFormat } from './username';
 
 describe('isValidUsernameFormat', () => {
   it('accepts letters, numbers, and underscores between 3 and 20 characters', () => {
@@ -29,7 +23,13 @@ describe('isValidUsernameFormat', () => {
     expect(isValidUsernameFormat('a'.repeat(21))).toBe(false);
   });
 
-  it('rejects uppercase input -- the field lowercases before this ever runs, but the check itself must not silently accept it', () => {
-    expect(isValidUsernameFormat('Sam')).toBe(false);
+  it('accepts uppercase and mixed case -- the backend keeps capitals as typed', () => {
+    expect(isValidUsernameFormat('Sam')).toBe(true);
+    expect(isValidUsernameFormat('Jordan_R')).toBe(true);
+    expect(isValidUsernameFormat('ABC')).toBe(true);
+  });
+
+  it('rejects letters outside A-Z, matching the backend pattern', () => {
+    expect(isValidUsernameFormat('josé')).toBe(false);
   });
 });
