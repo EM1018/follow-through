@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +18,25 @@ def _switch_user(user: CurrentUser) -> None:
     second client).
     """
     app.dependency_overrides[get_current_user] = lambda: user
+
+
+def _anchor_monday() -> date:
+    """The Monday the literal-date tests below are laid out around: the first
+    Monday at least two weeks out, so every date they use - plan starts included
+    - stays in the future no matter when the suite runs. Offsets from it keep the
+    original weekdays and gaps (it replaced a hardcoded 2026-08-24 that had
+    drifted into the past).
+    """
+    soon = datetime.now(UTC).date() + timedelta(days=14)
+    return soon + timedelta(days=(8 - soon.isoweekday()) % 7)
+
+
+_ANCHOR_MONDAY = _anchor_monday()
+
+
+def _day(offset: int) -> str:
+    """ISO date `offset` days from the anchor Monday (0 = Mon, -4 = the Thursday before)."""
+    return (_ANCHOR_MONDAY + timedelta(days=offset)).isoformat()
 
 
 def _days_after(start_iso: str, days: int) -> str:
@@ -170,7 +189,7 @@ async def test_stage_b_fields_in_body_are_422(
 
     on_date_attempt = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "day_of_week": 1, "on_date": "2026-08-24"},
+        json={"workout_id": workout["id"], "day_of_week": 1, "on_date": _day(0)},
     )
     assert on_date_attempt.status_code == 422
 
@@ -194,8 +213,8 @@ async def test_create_with_ends_on_before_starts_on_is_422(
         json={
             "workout_id": workout["id"],
             "day_of_week": 1,
-            "starts_on": "2026-09-03",
-            "ends_on": "2026-08-15",
+            "starts_on": _day(10),
+            "ends_on": _day(-9),
         },
     )
 
@@ -384,7 +403,7 @@ async def test_schedule_from_after_to_is_422(
     plan = await make_plan(client)
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-23"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(-1)}
     )
 
     assert response.status_code == 422
@@ -441,36 +460,36 @@ async def test_schedule_shape_mwf_one_week_window(
         assert created.status_code == 201
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-30"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(6)}
     )
 
     assert response.status_code == 200
     days = response.json()["days"]
 
-    expected_dates = {f"2026-08-{day:02d}" for day in range(24, 31)}
+    expected_dates = {_day(offset) for offset in range(7)}
     assert set(days.keys()) == expected_dates
 
-    assert days["2026-08-24"]["status"] == "scheduled"  # Mon
-    assert len(days["2026-08-24"]["entries"]) == 1
-    assert days["2026-08-24"]["entries"][0]["name"] == "Push"
-    assert days["2026-08-24"]["entries"][0]["notes"] == "chest/shoulders"
-    assert days["2026-08-24"]["entries"][0]["status"] == "scheduled"
+    assert days[_day(0)]["status"] == "scheduled"  # Mon
+    assert len(days[_day(0)]["entries"]) == 1
+    assert days[_day(0)]["entries"][0]["name"] == "Push"
+    assert days[_day(0)]["entries"][0]["notes"] == "chest/shoulders"
+    assert days[_day(0)]["entries"][0]["status"] == "scheduled"
 
-    assert days["2026-08-25"]["status"] == "empty"  # Tue
-    assert days["2026-08-25"]["entries"] == []
+    assert days[_day(1)]["status"] == "empty"  # Tue
+    assert days[_day(1)]["entries"] == []
 
-    assert len(days["2026-08-26"]["entries"]) == 1  # Wed
-    assert days["2026-08-26"]["entries"][0]["name"] == "Pull"
-    assert days["2026-08-26"]["entries"][0]["notes"] == "back/biceps"
+    assert len(days[_day(2)]["entries"]) == 1  # Wed
+    assert days[_day(2)]["entries"][0]["name"] == "Pull"
+    assert days[_day(2)]["entries"][0]["notes"] == "back/biceps"
 
-    assert days["2026-08-27"]["entries"] == []  # Thu
+    assert days[_day(3)]["entries"] == []  # Thu
 
-    assert len(days["2026-08-28"]["entries"]) == 1  # Fri
-    assert days["2026-08-28"]["entries"][0]["name"] == "Legs"
-    assert days["2026-08-28"]["entries"][0]["notes"] is None
+    assert len(days[_day(4)]["entries"]) == 1  # Fri
+    assert days[_day(4)]["entries"][0]["name"] == "Legs"
+    assert days[_day(4)]["entries"][0]["notes"] is None
 
-    assert days["2026-08-29"]["entries"] == []  # Sat
-    assert days["2026-08-30"]["entries"] == []  # Sun
+    assert days[_day(5)]["entries"] == []  # Sat
+    assert days[_day(6)]["entries"] == []  # Sun
 
 
 # H. inactive plan
@@ -495,11 +514,11 @@ async def test_schedule_works_on_inactive_plan(
     assert check_a.json()["is_active"] is False
 
     response = await client.get(
-        f"/plans/{plan_a['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan_a['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
 
     assert response.status_code == 200
-    assert len(response.json()["days"]["2026-08-24"]["entries"]) == 1
+    assert len(response.json()["days"][_day(0)]["entries"]) == 1
 
 
 # I. ownership + auth on the schedule endpoint
@@ -514,7 +533,7 @@ async def test_schedule_on_unowned_plan_is_404(
 
     _switch_user(second_user)
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
 
     assert response.status_code == 404
@@ -542,7 +561,7 @@ async def test_unauthenticated_requests_are_401(client: AsyncClient) -> None:
     assert deleted.status_code == 401
 
     schedule = await client.get(
-        f"/plans/{fake_plan_id}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{fake_plan_id}/schedule", params={"from": _day(0), "to": _day(0)}
     )
     assert schedule.status_code == 401
 
@@ -560,12 +579,12 @@ async def test_create_dated_entry(
 
     response = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "on_date": "2026-08-24"},
+        json={"workout_id": workout["id"], "on_date": _day(0)},
     )
 
     assert response.status_code == 201
     body = response.json()
-    assert body["on_date"] == "2026-08-24"
+    assert body["on_date"] == _day(0)
     assert body["day_of_week"] is None
 
 
@@ -582,7 +601,7 @@ async def test_create_with_both_day_of_week_and_on_date_is_422(
 
     response = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "day_of_week": 1, "on_date": "2026-08-24"},
+        json={"workout_id": workout["id"], "day_of_week": 1, "on_date": _day(0)},
     )
 
     assert response.status_code == 422
@@ -616,7 +635,7 @@ async def test_create_dated_entry_with_starts_on_is_422(
 
     response = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "on_date": "2026-08-24", "starts_on": "2026-08-15"},
+        json={"workout_id": workout["id"], "on_date": _day(0), "starts_on": _day(-9)},
     )
 
     assert response.status_code == 422
@@ -632,7 +651,7 @@ async def test_create_dated_entry_with_ends_on_is_422(
 
     response = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "on_date": "2026-08-24", "ends_on": "2026-09-03"},
+        json={"workout_id": workout["id"], "on_date": _day(0), "ends_on": _day(10)},
     )
 
     assert response.status_code == 422
@@ -725,7 +744,7 @@ async def test_create_with_nonexistent_replaces_entry_id_is_404(
         f"/plans/{plan['id']}/schedule-entries",
         json={
             "workout_id": workout["id"],
-            "on_date": "2026-08-24",
+            "on_date": _day(0),
             "replaces_entry_id": str(uuid4()),
         },
     )
@@ -751,7 +770,7 @@ async def test_create_with_replaces_entry_id_from_different_plan_is_404(
         f"/plans/{plan_b['id']}/schedule-entries",
         json={
             "workout_id": workout_b["id"],
-            "on_date": "2026-08-24",
+            "on_date": _day(0),
             "replaces_entry_id": entry_in_a["id"],
         },
     )
@@ -774,7 +793,7 @@ async def test_patch_replaces_entry_id_to_self_is_422(
         client,
         plan["id"],
         workout_id=workout["id"],
-        on_date="2026-08-24",
+        on_date=_day(0),
         replaces_entry_id=target["id"],
     )
 
@@ -908,7 +927,7 @@ async def test_patch_day_of_week_on_dated_entry_is_422(
     client, _user = authed_client
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
-    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-24")
+    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{dated['id']}", json={"day_of_week": 1}
@@ -931,7 +950,7 @@ async def test_patch_on_date_on_recurring_entry_is_422(
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{recurring['id']}",
-        json={"on_date": "2026-08-24"},
+        json={"on_date": _day(0)},
     )
 
     assert response.status_code == 422
@@ -947,20 +966,20 @@ async def test_patch_on_date_on_dated_entry_moves_the_schedule(
     client, _user = authed_client
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
-    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-24")
+    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
-        f"/plans/{plan['id']}/schedule-entries/{dated['id']}", json={"on_date": "2026-08-25"}
+        f"/plans/{plan['id']}/schedule-entries/{dated['id']}", json={"on_date": _day(1)}
     )
     assert response.status_code == 200
-    assert response.json()["on_date"] == "2026-08-25"
+    assert response.json()["on_date"] == _day(1)
 
     schedule = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-25"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(1)}
     )
     days = schedule.json()["days"]
-    assert days["2026-08-24"]["entries"] == []
-    assert len(days["2026-08-25"]["entries"]) == 1
+    assert days[_day(0)]["entries"] == []
+    assert len(days[_day(1)]["entries"]) == 1
 
 
 # T. PATCH clearing
@@ -1004,11 +1023,11 @@ async def test_deleting_target_cascades_to_replacement_and_cancellation(
         client,
         plan["id"],
         workout_id=workout["id"],
-        on_date="2026-08-24",
+        on_date=_day(0),
         replaces_entry_id=target["id"],
     )
     cancellation = await make_entry(
-        client, plan["id"], on_date="2026-08-31", replaces_entry_id=target["id"]
+        client, plan["id"], on_date=_day(7), replaces_entry_id=target["id"]
     )
 
     deleted = await client.delete(f"/plans/{plan['id']}/schedule-entries/{target['id']}")
@@ -1037,10 +1056,10 @@ async def test_schedule_shape_name_only_entry(
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
     assert response.status_code == 200
-    day = response.json()["days"]["2026-08-24"]
+    day = response.json()["days"][_day(0)]
     assert set(day.keys()) == {"status", "entries", "cancelled", "completed"}
     assert day["status"] == "scheduled"
     assert day["completed"] is False
@@ -1089,7 +1108,7 @@ async def test_user_b_cannot_reference_user_a_entry_via_replaces_entry_id(
         f"/plans/{plan_b['id']}/schedule-entries",
         json={
             "workout_id": workout_b["id"],
-            "on_date": "2026-08-24",
+            "on_date": _day(0),
             "replaces_entry_id": entry_a["id"],
         },
     )
@@ -1109,14 +1128,14 @@ async def test_user_b_patch_delete_on_user_a_dated_entry_is_404(
     plan_a = await make_plan(client)
     workout_a = await make_workout(client, plan_a["id"])
     dated_a = await make_entry(
-        client, plan_a["id"], workout_id=workout_a["id"], on_date="2026-08-24"
+        client, plan_a["id"], workout_id=workout_a["id"], on_date=_day(0)
     )
 
     _switch_user(second_user)
 
     patched = await client.patch(
         f"/plans/{plan_a['id']}/schedule-entries/{dated_a['id']}",
-        json={"on_date": "2026-08-25"},
+        json={"on_date": _day(1)},
     )
     assert patched.status_code == 404
 
@@ -1134,7 +1153,7 @@ async def test_unauthenticated_stage_b_requests_are_401(client: AsyncClient) -> 
 
     dated_create = await client.post(
         f"/plans/{fake_plan_id}/schedule-entries",
-        json={"workout_id": str(uuid4()), "on_date": "2026-08-24"},
+        json={"workout_id": str(uuid4()), "on_date": _day(0)},
     )
     assert dated_create.status_code == 401
 
@@ -1148,7 +1167,7 @@ async def test_unauthenticated_stage_b_requests_are_401(client: AsyncClient) -> 
         f"/plans/{fake_plan_id}/schedule-entries",
         json={
             "workout_id": str(uuid4()),
-            "on_date": "2026-08-24",
+            "on_date": _day(0),
             "replaces_entry_id": str(uuid4()),
         },
     )
@@ -1156,7 +1175,7 @@ async def test_unauthenticated_stage_b_requests_are_401(client: AsyncClient) -> 
 
     patched = await client.patch(
         f"/plans/{fake_plan_id}/schedule-entries/{fake_entry_id}",
-        json={"on_date": "2026-08-25"},
+        json={"on_date": _day(1)},
     )
     assert patched.status_code == 401
 
@@ -1174,11 +1193,11 @@ async def test_patch_starts_on_on_dated_entry_is_422(
     client, _user = authed_client
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
-    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-24")
+    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{dated['id']}",
-        json={"starts_on": "2026-08-15"},
+        json={"starts_on": _day(-9)},
     )
 
     assert response.status_code == 422
@@ -1196,7 +1215,7 @@ async def test_patch_replaces_entry_id_on_recurring_entry_is_422(
     workout = await make_workout(client, plan["id"])
     recurring = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
     dated_target = await make_entry(
-        client, plan["id"], workout_id=workout["id"], on_date="2026-08-24"
+        client, plan["id"], workout_id=workout["id"], on_date=_day(0)
     )
 
     response = await client.patch(
@@ -1217,7 +1236,7 @@ async def test_patch_replaces_entry_id_to_nonexistent_entry_is_404(
     client, _user = authed_client
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
-    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-24")
+    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{dated['id']}",
@@ -1269,7 +1288,7 @@ async def test_patch_body_with_day_of_week_and_on_date_together_is_422(
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{recurring['id']}",
-        json={"day_of_week": 2, "on_date": "2026-08-24"},
+        json={"day_of_week": 2, "on_date": _day(0)},
     )
 
     assert response.status_code == 422
@@ -1285,11 +1304,11 @@ async def test_patch_body_with_on_date_and_starts_on_together_is_422(
     client, _user = authed_client
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
-    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-24")
+    dated = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{dated['id']}",
-        json={"on_date": "2026-08-25", "starts_on": "2026-08-15"},
+        json={"on_date": _day(1), "starts_on": _day(-9)},
     )
 
     assert response.status_code == 422
@@ -1411,14 +1430,14 @@ async def test_mixed_day_scheduled_and_cancelled_reports_scheduled(
         client, plan["id"], workout_id=cancelled_workout["id"], day_of_week=1
     )
     await make_entry(
-        client, plan["id"], on_date="2026-08-24", replaces_entry_id=cancelled_target["id"]
+        client, plan["id"], on_date=_day(0), replaces_entry_id=cancelled_target["id"]
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
     assert response.status_code == 200
-    day = response.json()["days"]["2026-08-24"]
+    day = response.json()["days"][_day(0)]
 
     assert day["status"] == "scheduled"
     assert [e["name"] for e in day["entries"]] == ["Push"]
@@ -1432,13 +1451,13 @@ async def test_name_only_entry_as_cancellation_target_names_correctly(
     client, _user = authed_client
     plan = await make_plan(client)
     rest_day = await make_entry(client, plan["id"], name_override="Rest", day_of_week=1)
-    await make_entry(client, plan["id"], on_date="2026-08-24", replaces_entry_id=rest_day["id"])
+    await make_entry(client, plan["id"], on_date=_day(0), replaces_entry_id=rest_day["id"])
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
     assert response.status_code == 200
-    day = response.json()["days"]["2026-08-24"]
+    day = response.json()["days"][_day(0)]
 
     assert day["status"] == "cancelled"
     assert day["entries"] == []
@@ -1460,15 +1479,15 @@ async def test_name_only_entry_as_replacement_reports_its_own_name(
         client,
         plan["id"],
         name_override="Active recovery",
-        on_date="2026-08-24",
+        on_date=_day(0),
         replaces_entry_id=recurring["id"],
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
     assert response.status_code == 200
-    day = response.json()["days"]["2026-08-24"]
+    day = response.json()["days"][_day(0)]
 
     assert day["status"] == "substituted"
     assert len(day["entries"]) == 1
@@ -1491,28 +1510,28 @@ async def test_unbounded_entry_before_plan_start_is_empty_on_and_after_is_schedu
     clamp), not create-time validation, is what has to catch this.
     """
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20")  # Thursday
+    plan = await make_plan(client, starts_on=_day(-4))  # Thursday
     await client.post(
         f"/plans/{plan['id']}/schedule-entries",
         json={"day_of_week": 7, "name_override": "Rest day"},  # unbounded recurring Sunday
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-16", "to": "2026-08-30"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(-8), "to": _day(6)}
     )
     assert response.status_code == 200
     days = response.json()["days"]
 
     # every date in the range is present as a key, in or out of window
-    assert set(days.keys()) == {f"2026-08-{d:02d}" for d in range(16, 31)}
+    assert set(days.keys()) == {_day(offset) for offset in range(-8, 7)}
 
-    # 2026-08-16 is a Sunday, before the plan starts (2026-08-20) - clamped
-    assert days["2026-08-16"]["status"] == "empty"
-    assert days["2026-08-16"]["entries"] == []
+    # _day(-8) is a Sunday, before the plan starts (_day(-4)) - clamped
+    assert days[_day(-8)]["status"] == "empty"
+    assert days[_day(-8)]["entries"] == []
 
-    # 2026-08-23 is the first Sunday on/after the plan's start - resolves normally
-    assert days["2026-08-23"]["status"] == "scheduled"
-    assert days["2026-08-23"]["entries"][0]["name"] == "Rest day"
+    # _day(-1) is the first Sunday on/after the plan's start - resolves normally
+    assert days[_day(-1)]["status"] == "scheduled"
+    assert days[_day(-1)]["entries"][0]["name"] == "Rest day"
 
 
 @pytest.mark.asyncio
@@ -1521,21 +1540,21 @@ async def test_unbounded_entry_after_plan_end_is_empty(
 ) -> None:
     """Symmetric case: past ends_on clamps too."""
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     await client.post(
         f"/plans/{plan['id']}/schedule-entries",
         json={"day_of_week": 7, "name_override": "Rest day"},
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-23", "to": "2026-09-06"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(-1), "to": _day(13)}
     )
     assert response.status_code == 200
     days = response.json()["days"]
 
-    assert days["2026-08-23"]["status"] == "scheduled"  # within window
-    assert days["2026-08-30"]["status"] == "empty"  # past plan.ends_on (08-27)
-    assert days["2026-08-30"]["entries"] == []
+    assert days[_day(-1)]["status"] == "scheduled"  # within window
+    assert days[_day(6)]["status"] == "empty"  # past plan.ends_on (08-27)
+    assert days[_day(6)]["entries"] == []
 
 
 @pytest.mark.asyncio
@@ -1543,14 +1562,14 @@ async def test_plan_with_no_end_date_has_no_upper_bound(
     authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any
 ) -> None:
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on=None)
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=None)
     await client.post(
         f"/plans/{plan['id']}/schedule-entries",
         json={"day_of_week": 7, "name_override": "Rest day"},
     )
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2027-08-01", "to": "2027-08-07"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(342), "to": _day(348)}
     )
     assert response.status_code == 200
     days = response.json()["days"]
@@ -1570,23 +1589,23 @@ async def test_narrowing_plan_start_clamps_a_cancelled_day_to_empty(
     day states the date would otherwise have resolved to. This one: cancelled.
     """
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20")
+    plan = await make_plan(client, starts_on=_day(-4))
     workout = await make_workout(client, plan["id"], name="Push")
     recurring = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
-    await make_entry(client, plan["id"], on_date="2026-08-24", replaces_entry_id=recurring["id"])
+    await make_entry(client, plan["id"], on_date=_day(0), replaces_entry_id=recurring["id"])
 
     before = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
-    assert before.json()["days"]["2026-08-24"]["status"] == "cancelled"
+    assert before.json()["days"][_day(0)]["status"] == "cancelled"
 
-    patched = await client.patch(f"/plans/{plan['id']}", json={"starts_on": "2026-08-25"})
+    patched = await client.patch(f"/plans/{plan['id']}", json={"starts_on": _day(1)})
     assert patched.status_code == 200
 
     after = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
-    day = after.json()["days"]["2026-08-24"]
+    day = after.json()["days"][_day(0)]
     assert day["status"] == "empty"
     assert day["entries"] == []
     assert day["cancelled"] == []
@@ -1601,7 +1620,7 @@ async def test_narrowing_plan_start_clamps_a_substituted_day_to_empty(
 ) -> None:
     """Same as above, for the substituted state."""
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20")
+    plan = await make_plan(client, starts_on=_day(-4))
     original = await make_workout(client, plan["id"], name="Push")
     substitute = await make_workout(client, plan["id"], name="Yoga")
     recurring = await make_entry(client, plan["id"], workout_id=original["id"], day_of_week=1)
@@ -1609,22 +1628,22 @@ async def test_narrowing_plan_start_clamps_a_substituted_day_to_empty(
         client,
         plan["id"],
         workout_id=substitute["id"],
-        on_date="2026-08-24",
+        on_date=_day(0),
         replaces_entry_id=recurring["id"],
     )
 
     before = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
-    assert before.json()["days"]["2026-08-24"]["status"] == "substituted"
+    assert before.json()["days"][_day(0)]["status"] == "substituted"
 
-    patched = await client.patch(f"/plans/{plan['id']}", json={"starts_on": "2026-08-25"})
+    patched = await client.patch(f"/plans/{plan['id']}", json={"starts_on": _day(1)})
     assert patched.status_code == 200
 
     after = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-24", "to": "2026-08-24"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
     )
-    day = after.json()["days"]["2026-08-24"]
+    day = after.json()["days"][_day(0)]
     assert day["status"] == "empty"
     assert day["entries"] == []
 
@@ -1637,7 +1656,7 @@ async def test_create_recurring_entry_with_bounds_outside_plan_is_422(
     plan does.
     """
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     workout = await make_workout(client, plan["id"])
 
     before_start = await client.post(
@@ -1645,8 +1664,8 @@ async def test_create_recurring_entry_with_bounds_outside_plan_is_422(
         json={
             "workout_id": workout["id"],
             "day_of_week": 1,
-            "starts_on": "2026-08-01",
-            "ends_on": "2026-08-25",
+            "starts_on": _day(-23),
+            "ends_on": _day(1),
         },
     )
     assert before_start.status_code == 422
@@ -1656,8 +1675,8 @@ async def test_create_recurring_entry_with_bounds_outside_plan_is_422(
         json={
             "workout_id": workout["id"],
             "day_of_week": 1,
-            "starts_on": "2026-08-21",
-            "ends_on": "2026-09-15",
+            "starts_on": _day(-3),
+            "ends_on": _day(22),
         },
     )
     assert after_end.status_code == 422
@@ -1668,7 +1687,7 @@ async def test_create_recurring_entry_with_bounds_within_plan_is_201(
     authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_workout: Any
 ) -> None:
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     workout = await make_workout(client, plan["id"])
 
     response = await client.post(
@@ -1676,8 +1695,8 @@ async def test_create_recurring_entry_with_bounds_within_plan_is_201(
         json={
             "workout_id": workout["id"],
             "day_of_week": 1,
-            "starts_on": "2026-08-21",
-            "ends_on": "2026-08-26",
+            "starts_on": _day(-3),
+            "ends_on": _day(2),
         },
     )
     assert response.status_code == 201
@@ -1688,18 +1707,18 @@ async def test_create_dated_entry_with_on_date_outside_plan_is_422(
     authed_client: tuple[AsyncClient, CurrentUser], make_plan: Any, make_workout: Any
 ) -> None:
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     workout = await make_workout(client, plan["id"])
 
     before_start = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "on_date": "2026-08-19"},
+        json={"workout_id": workout["id"], "on_date": _day(-5)},
     )
     assert before_start.status_code == 422
 
     after_end = await client.post(
         f"/plans/{plan['id']}/schedule-entries",
-        json={"workout_id": workout["id"], "on_date": "2026-08-28"},
+        json={"workout_id": workout["id"], "on_date": _day(4)},
     )
     assert after_end.status_code == 422
 
@@ -1712,13 +1731,13 @@ async def test_patch_entry_starts_on_outside_plan_is_422(
     make_entry: Any,
 ) -> None:
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     workout = await make_workout(client, plan["id"])
     entry = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{entry['id']}",
-        json={"starts_on": "2026-08-01"},
+        json={"starts_on": _day(-23)},
     )
     assert response.status_code == 422
 
@@ -1731,13 +1750,13 @@ async def test_patch_dated_entry_on_date_outside_plan_is_422(
     make_entry: Any,
 ) -> None:
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20", ends_on="2026-08-27")
+    plan = await make_plan(client, starts_on=_day(-4), ends_on=_day(3))
     workout = await make_workout(client, plan["id"])
-    entry = await make_entry(client, plan["id"], workout_id=workout["id"], on_date="2026-08-22")
+    entry = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(-2))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{entry['id']}",
-        json={"on_date": "2026-08-30"},
+        json={"on_date": _day(6)},
     )
     assert response.status_code == 422
 
@@ -1755,7 +1774,7 @@ async def test_pre_existing_out_of_window_entry_resolves_empty_not_erroring(
     (Part 1's clamp) must handle it gracefully rather than erroring.
     """
     client, _user = authed_client
-    plan = await make_plan(client, starts_on="2026-08-20")
+    plan = await make_plan(client, starts_on=_day(-4))
     workout_resp = await make_workout(client, plan["id"], name="Legacy")
 
     entry = ScheduleEntry(
@@ -1767,10 +1786,10 @@ async def test_pre_existing_out_of_window_entry_resolves_empty_not_erroring(
     await session.commit()
 
     response = await client.get(
-        f"/plans/{plan['id']}/schedule", params={"from": "2026-08-10", "to": "2026-08-10"}
+        f"/plans/{plan['id']}/schedule", params={"from": _day(-14), "to": _day(-14)}
     )
     assert response.status_code == 200
-    day = response.json()["days"]["2026-08-10"]
+    day = response.json()["days"][_day(-14)]
     assert day["status"] == "empty"
     assert day["entries"] == []
 
