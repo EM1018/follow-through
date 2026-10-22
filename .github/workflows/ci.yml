@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/not_used_in_ci
+  SUPABASE_JWKS_URL: https://example.invalid/auth/v1/.well-known/jwks.json
+  SUPABASE_URL: https://example.invalid
+  SUPABASE_ANON_KEY: ci-dummy-key
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: follow_through_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/follow_through_test
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.1
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        id: install
+        run: uv sync --locked
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run ruff check .
+
+      - name: Check formatting
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run ruff format --check .
+
+      - name: Test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: uv run pytest
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        id: install
+        run: npm ci
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - name: Test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test -- --ci
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.1
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --locked
+          npm ci --prefix mobile
+
+      - name: Regenerate contract and mobile types
+        run: |
+          uv run python scripts/dump_openapi.py
+          npm run gen:api --prefix mobile
+
+      - name: Fail if generated files are out of date
+        run: |
+          if ! git diff --exit-code -- contract/openapi.json mobile/src/api/schema.d.ts; then
+            echo "::error::Generated API files are out of date. Run 'uv run python scripts/dump_openapi.py' and 'npm run gen:api' in mobile/, then commit the result."
+            exit 1
+          fi
