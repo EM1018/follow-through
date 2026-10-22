@@ -20,7 +20,7 @@ router = APIRouter(prefix="/plans/{plan_id}/schedule-entries", tags=["schedule-e
 async def _reject_if_completion_exists(
     session: AsyncSession, schedule_entry_id: uuid.UUID, on_date: date
 ) -> None:
-    """"This happened" and "this didn't happen" can't both be true for the
+    """ "This happened" and "this didn't happen" can't both be true for the
     same entry on the same day - scoped to the date, not the entry, since a
     recurring entry is one row covering many Mondays and a completion on one
     must not block cancelling another.

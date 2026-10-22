@@ -34,9 +34,10 @@ class CommitmentCreate(BaseModel):
         if (self.target_value is None) != (self.target_unit is None):
             raise ValueError("target_value and target_unit must be set together")
 
-        if self.target_unit is not None and self.target_unit not in ACTIVITY_UNITS[
-            self.activity
-        ].permitted:
+        if (
+            self.target_unit is not None
+            and self.target_unit not in ACTIVITY_UNITS[self.activity].permitted
+        ):
             raise ValueError(f"{self.target_unit} is not a valid unit for {self.activity}")
 
         return self

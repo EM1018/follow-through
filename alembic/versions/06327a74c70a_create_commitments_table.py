@@ -79,9 +79,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["rematch_of_id"], ["commitments.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_commitments_creator_id"), "commitments", ["creator_id"], unique=False
-    )
+    op.create_index(op.f("ix_commitments_creator_id"), "commitments", ["creator_id"], unique=False)
 
 
 def downgrade() -> None:

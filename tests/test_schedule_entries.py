@@ -1127,9 +1127,7 @@ async def test_user_b_patch_delete_on_user_a_dated_entry_is_404(
     client, _me = authed_client
     plan_a = await make_plan(client)
     workout_a = await make_workout(client, plan_a["id"])
-    dated_a = await make_entry(
-        client, plan_a["id"], workout_id=workout_a["id"], on_date=_day(0)
-    )
+    dated_a = await make_entry(client, plan_a["id"], workout_id=workout_a["id"], on_date=_day(0))
 
     _switch_user(second_user)
 
@@ -1214,9 +1212,7 @@ async def test_patch_replaces_entry_id_on_recurring_entry_is_422(
     plan = await make_plan(client)
     workout = await make_workout(client, plan["id"])
     recurring = await make_entry(client, plan["id"], workout_id=workout["id"], day_of_week=1)
-    dated_target = await make_entry(
-        client, plan["id"], workout_id=workout["id"], on_date=_day(0)
-    )
+    dated_target = await make_entry(client, plan["id"], workout_id=workout["id"], on_date=_day(0))
 
     response = await client.patch(
         f"/plans/{plan['id']}/schedule-entries/{recurring['id']}",
@@ -1429,9 +1425,7 @@ async def test_mixed_day_scheduled_and_cancelled_reports_scheduled(
     cancelled_target = await make_entry(
         client, plan["id"], workout_id=cancelled_workout["id"], day_of_week=1
     )
-    await make_entry(
-        client, plan["id"], on_date=_day(0), replaces_entry_id=cancelled_target["id"]
-    )
+    await make_entry(client, plan["id"], on_date=_day(0), replaces_entry_id=cancelled_target["id"])
 
     response = await client.get(
         f"/plans/{plan['id']}/schedule", params={"from": _day(0), "to": _day(0)}
@@ -1833,9 +1827,7 @@ async def test_cancel_swap_cancel_leaves_one_cancellation_no_replacement(
     )
     assert swap.status_code == 201, swap.text
 
-    undo_swap = await client.delete(
-        f"/plans/{plan['id']}/schedule-entries/{swap.json()['id']}"
-    )
+    undo_swap = await client.delete(f"/plans/{plan['id']}/schedule-entries/{swap.json()['id']}")
     assert undo_swap.status_code == 204
 
     result = await session.exec(

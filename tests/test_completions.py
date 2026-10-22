@@ -213,12 +213,8 @@ async def test_two_valueless_completions_same_date_no_entry_link_both_succeed(
     standalone logs, exercised through the real endpoint this time.
     """
     client, _user = authed_client
-    first = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
-    second = await client.post(
-        "/completions", json={"activity": "walking", "on_date": str(TODAY)}
-    )
+    first = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
+    second = await client.post("/completions", json={"activity": "walking", "on_date": str(TODAY)})
     assert first.status_code == 201, first.text
     assert second.status_code == 201, second.text
 
@@ -551,9 +547,7 @@ async def test_patch_value_alone_is_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     response = await client.patch(f"/completions/{completion_id}", json={"value": "5"})
@@ -626,9 +620,7 @@ async def test_patch_immutable_fields_are_422(
     is the same event, unlike a different date or a different schedule entry.
     """
     client, _user = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     for payload in (
@@ -645,9 +637,7 @@ async def test_patch_another_users_completion_is_404(
     second_user: CurrentUser,
 ) -> None:
     client, user_a = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     _switch_user(second_user)
@@ -685,9 +675,7 @@ async def test_patch_activity_onto_null_activity_completion(
     assert response.status_code == 200, response.text
     assert response.json()["activity"] == "strength_training"
 
-    result = await session.exec(
-        select(Completion).where(Completion.id == UUID(completion_id))
-    )
+    result = await session.exec(select(Completion).where(Completion.id == UUID(completion_id)))
     assert result.one().activity == "strength_training"
 
 
@@ -696,14 +684,10 @@ async def test_patch_activity_to_null(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
-    response = await client.patch(
-        f"/completions/{completion_id}", json={"activity": None}
-    )
+    response = await client.patch(f"/completions/{completion_id}", json={"activity": None})
     assert response.status_code == 200, response.text
     assert response.json()["activity"] is None
 
@@ -763,15 +747,11 @@ async def test_patch_activity_on_another_users_completion_is_404(
     second_user: CurrentUser,
 ) -> None:
     client, user_a = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     _switch_user(second_user)
-    response = await client.patch(
-        f"/completions/{completion_id}", json={"activity": "cycling"}
-    )
+    response = await client.patch(f"/completions/{completion_id}", json={"activity": "cycling"})
     assert response.status_code == 404
 
     _switch_user(user_a)
@@ -800,9 +780,7 @@ async def test_patch_activity_leaves_source_and_entry_link_untouched(
     )
     assert response.status_code == 200, response.text
 
-    result = await session.exec(
-        select(Completion).where(Completion.id == UUID(completion_id))
-    )
+    result = await session.exec(select(Completion).where(Completion.id == UUID(completion_id)))
     row = result.one()
     assert row.source == "scheduled"
     assert row.schedule_entry_id == UUID(entry["id"])
@@ -817,9 +795,7 @@ async def test_delete_own_completion(
     session: AsyncSession,
 ) -> None:
     client, _user = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     response = await client.delete(f"/completions/{completion_id}")
@@ -835,9 +811,7 @@ async def test_delete_another_users_completion_is_404(
     second_user: CurrentUser,
 ) -> None:
     client, user_a = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
     _switch_user(second_user)
@@ -868,9 +842,7 @@ async def test_delete_completion_leaves_its_schedule_entry_untouched(
     response = await client.delete(f"/completions/{completion_id}")
     assert response.status_code == 204
 
-    result = await session.exec(
-        select(ScheduleEntry).where(ScheduleEntry.id == UUID(entry["id"]))
-    )
+    result = await session.exec(select(ScheduleEntry).where(ScheduleEntry.id == UUID(entry["id"])))
     assert result.one().id == UUID(entry["id"])
 
 
@@ -925,14 +897,10 @@ async def test_source_in_patch_body_is_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    created = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    created = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     completion_id = created.json()["id"]
 
-    response = await client.patch(
-        f"/completions/{completion_id}", json={"source": "standalone"}
-    )
+    response = await client.patch(f"/completions/{completion_id}", json={"source": "standalone"})
     assert response.status_code == 422
 
 
@@ -959,9 +927,7 @@ async def test_deleting_schedule_entry_keeps_source_scheduled(
 
     await client.delete(f"/plans/{plan['id']}/schedule-entries/{entry['id']}")
 
-    result = await session.exec(
-        select(Completion).where(Completion.id == UUID(completion_id))
-    )
+    result = await session.exec(select(Completion).where(Completion.id == UUID(completion_id)))
     row = result.one()
     assert row.schedule_entry_id is None
     assert row.source == "scheduled"
@@ -987,9 +953,7 @@ async def test_deleting_workout_cascades_but_keeps_source_scheduled(
 
     await client.delete(f"/plans/{plan['id']}/workouts/{workout['id']}")
 
-    result = await session.exec(
-        select(Completion).where(Completion.id == UUID(completion_id))
-    )
+    result = await session.exec(select(Completion).where(Completion.id == UUID(completion_id)))
     row = result.one()
     assert row.schedule_entry_id is None
     assert row.source == "scheduled"
@@ -1041,9 +1005,7 @@ async def test_stored_value_column_is_still_decimal(
     )
     completion_id = created.json()["id"]
 
-    result = await session.exec(
-        select(Completion).where(Completion.id == UUID(completion_id))
-    )
+    result = await session.exec(select(Completion).where(Completion.id == UUID(completion_id)))
     row = result.one()
     assert isinstance(row.value, Decimal)
     assert row.value == Decimal("3.20")
@@ -1062,15 +1024,11 @@ async def test_returns_own_completions_not_second_users(
     assert mine.status_code == 201, mine.text
 
     _switch_user(second_user)
-    theirs = await client.post(
-        "/completions", json={"activity": "walking", "on_date": str(TODAY)}
-    )
+    theirs = await client.post("/completions", json={"activity": "walking", "on_date": str(TODAY)})
     assert theirs.status_code == 201, theirs.text
     _switch_user(user_a)
 
-    response = await client.get(
-        "/completions", params={"from": str(TODAY), "to": str(TODAY)}
-    )
+    response = await client.get("/completions", params={"from": str(TODAY), "to": str(TODAY)})
     assert response.status_code == 200, response.text
     ids = {row["id"] for row in response.json()}
     assert mine.json()["id"] in ids
@@ -1084,9 +1042,7 @@ async def test_both_boundary_dates_included(
     client, _user = authed_client
     from_ = YESTERDAY
     to = TODAY
-    start = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(from_)}
-    )
+    start = await client.post("/completions", json={"activity": "running", "on_date": str(from_)})
     end = await client.post("/completions", json={"activity": "walking", "on_date": str(to)})
 
     response = await client.get("/completions", params={"from": str(from_), "to": str(to)})
@@ -1121,9 +1077,7 @@ async def test_ordering_is_on_date_desc_then_created_at_desc(
     session.add_all([first_row, second_row])
     await session.commit()
 
-    response = await client.get(
-        "/completions", params={"from": str(YESTERDAY), "to": str(TODAY)}
-    )
+    response = await client.get("/completions", params={"from": str(YESTERDAY), "to": str(TODAY)})
     assert response.status_code == 200, response.text
     ids = [row["id"] for row in response.json()]
     assert ids == [
@@ -1138,9 +1092,7 @@ async def test_activity_filter_returns_only_matching_rows(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    running = await client.post(
-        "/completions", json={"activity": "running", "on_date": str(TODAY)}
-    )
+    running = await client.post("/completions", json={"activity": "running", "on_date": str(TODAY)})
     await client.post("/completions", json={"activity": "walking", "on_date": str(TODAY)})
 
     response = await client.get(
@@ -1201,9 +1153,7 @@ async def test_to_before_from_is_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    response = await client.get(
-        "/completions", params={"from": str(TODAY), "to": str(YESTERDAY)}
-    )
+    response = await client.get("/completions", params={"from": str(TODAY), "to": str(YESTERDAY)})
     assert response.status_code == 422
 
 
@@ -1212,12 +1162,8 @@ async def test_missing_from_or_to_is_422(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _user = authed_client
-    assert (
-        await client.get("/completions", params={"to": str(TODAY)})
-    ).status_code == 422
-    assert (
-        await client.get("/completions", params={"from": str(TODAY)})
-    ).status_code == 422
+    assert (await client.get("/completions", params={"to": str(TODAY)})).status_code == 422
+    assert (await client.get("/completions", params={"from": str(TODAY)})).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -1226,9 +1172,7 @@ async def test_empty_range_returns_empty_list_not_404(
 ) -> None:
     client, _user = authed_client
     far_past = TODAY - timedelta(days=365)
-    response = await client.get(
-        "/completions", params={"from": str(far_past), "to": str(far_past)}
-    )
+    response = await client.get("/completions", params={"from": str(far_past), "to": str(far_past)})
     assert response.status_code == 200
     assert response.json() == []
 
@@ -1250,9 +1194,7 @@ async def test_completion_with_deleted_entry_still_appears(
     )
     await client.delete(f"/plans/{plan['id']}/schedule-entries/{entry['id']}")
 
-    response = await client.get(
-        "/completions", params={"from": str(TODAY), "to": str(TODAY)}
-    )
+    response = await client.get("/completions", params={"from": str(TODAY), "to": str(TODAY)})
     assert response.status_code == 200, response.text
     by_id = {row["id"]: row for row in response.json()}
     assert created.json()["id"] in by_id

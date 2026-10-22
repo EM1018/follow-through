@@ -44,9 +44,7 @@ async def _get_owned_entry(
     return entry
 
 
-def _derive_activity(
-    workout: Workout | None, activity: Activity | None
-) -> Activity | None:
+def _derive_activity(workout: Workout | None, activity: Activity | None) -> Activity | None:
     # An explicit activity always wins; only fill in when the client left it
     # out. A name-only entry has no workout to read from, and a workout with
     # no activity of its own has nothing to substitute - null stays null,

@@ -13,7 +13,7 @@ def _now() -> datetime:
 
 
 def user_today(user: User) -> date:
-    """"Today" as this user would see it on their own clock, not the
+    """ "Today" as this user would see it on their own clock, not the
     server's. Every current-date read in the app should go through this.
     """
     return _now().astimezone(ZoneInfo(user.timezone)).date()

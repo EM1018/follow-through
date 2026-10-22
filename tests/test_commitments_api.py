@@ -140,9 +140,7 @@ async def test_target_unit_not_permitted_for_activity_is_422(
 ) -> None:
     client, _me = authed_client
     # strength_training only permits minutes/hours/sets/reps - miles isn't one.
-    payload = _commitment_payload(
-        activity="strength_training", target_value=5, target_unit="miles"
-    )
+    payload = _commitment_payload(activity="strength_training", target_value=5, target_unit="miles")
 
     response = await client.post("/commitments", json=payload)
     assert response.status_code == 422
@@ -343,9 +341,7 @@ async def test_ending_a_fixed_length_goal_early_works_the_same_way(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=8)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=8))
     commitment_id = created.json()["id"]
 
     response = await client.post(f"/commitments/{commitment_id}/end")
@@ -385,9 +381,7 @@ async def test_ending_a_goal_already_finished_by_duration_is_409(
     authed_client: tuple[AsyncClient, CurrentUser], session: AsyncSession
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=1)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=1))
     commitment_id = created.json()["id"]
 
     # Force it into "already finished" territory - duration_weeks=1 means the
@@ -424,9 +418,7 @@ async def test_ending_does_not_change_duration_weeks(
     authed_client: tuple[AsyncClient, CurrentUser],
 ) -> None:
     client, _me = authed_client
-    created = await client.post(
-        "/commitments", json=_commitment_payload(duration_weeks=8)
-    )
+    created = await client.post("/commitments", json=_commitment_payload(duration_weeks=8))
     commitment_id = created.json()["id"]
 
     response = await client.post(f"/commitments/{commitment_id}/end")
