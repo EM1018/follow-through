@@ -8,7 +8,7 @@ import { Card } from '@/components/Card';
 import { colors, fontSize, fontWeight, radius, spacing } from '@/theme';
 
 import { invalidateMeQueries, updateMe, useMe, type MeRead } from './me';
-import { isValidUsernameFormat, lowercaseUsername, USERNAME_HELPER_TEXT, USERNAME_TAKEN_ERROR } from './username';
+import { isValidUsernameFormat, USERNAME_HELPER_TEXT, USERNAME_TAKEN_ERROR } from './username';
 
 // Parent conditionally mounts this component (same rationale as
 // WorkoutEditSheet), so a fresh mount every open is guaranteed -- initial
@@ -35,7 +35,7 @@ export function UsernameEditorSheet({ onClose }: { onClose: () => void }) {
   }
 
   function handleChangeText(text: string) {
-    setUsername(lowercaseUsername(text));
+    setUsername(text);
     // Clear a stale "taken" result the moment the user changes what they typed --
     // it described the old text, not this one.
     if (saveMutation.isError) {

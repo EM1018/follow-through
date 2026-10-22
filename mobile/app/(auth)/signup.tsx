@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { updateMeWithToken, type MeUpdate } from '@/features/profile/me';
-import { isValidUsernameFormat, lowercaseUsername } from '@/features/profile/username';
+import { isValidUsernameFormat, USERNAME_FORMAT_ERROR } from '@/features/profile/username';
 import { supabase } from '@/lib/supabase';
 import { useSession } from '@/lib/session';
 import { colors } from '@/theme';
@@ -36,7 +36,7 @@ export default function SignUpScreen() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
   function handleUsernameChange(text: string) {
-    setUsername(lowercaseUsername(text));
+    setUsername(text);
     if (usernameError) setUsernameError(null);
   }
 
@@ -51,7 +51,7 @@ export default function SignUpScreen() {
       ok = false;
     }
     if (!isValidUsernameFormat(username)) {
-      setUsernameError('3-20 characters: lowercase letters, numbers, underscores');
+      setUsernameError(USERNAME_FORMAT_ERROR);
       ok = false;
     }
     return ok;
@@ -82,7 +82,7 @@ export default function SignUpScreen() {
   async function handleClaimUsername() {
     if (!accessToken) return;
     if (!isValidUsernameFormat(username)) {
-      setUsernameError('3-20 characters: lowercase letters, numbers, underscores');
+      setUsernameError(USERNAME_FORMAT_ERROR);
       return;
     }
 

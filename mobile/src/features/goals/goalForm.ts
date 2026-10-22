@@ -15,20 +15,48 @@ export type GoalForm = {
   amount: GoalAmount;
   sessionsPerWeek: number;
   duration: GoalDuration;
+  /** "Send to": a username turns the goal into a challenge. Kept exactly as typed -- usernames keep their case. */
+  sendTo: string;
 };
 
 export const MIN_SESSIONS_PER_WEEK = 1;
 export const MAX_SESSIONS_PER_WEEK = 7;
 export const MIN_DURATION_WEEKS = 1;
 export const MAX_DURATION_WEEKS = 8;
+const DEFAULT_DURATION_WEEKS = 2;
 
 export function defaultGoalForm(): GoalForm {
   return {
     activity: null,
     amount: { kind: 'none' },
     sessionsPerWeek: 2,
-    duration: { kind: 'weeks', weeks: 2 },
+    duration: { kind: 'weeks', weeks: DEFAULT_DURATION_WEEKS },
+    sendTo: '',
   };
+}
+
+/**
+ * A challenge is a form with someone in "Send to" -- the one thing that
+ * decides the sheet's title, whether Ongoing is offered, and (on save)
+ * whether recipient_username is sent. Whitespace alone is still a goal.
+ */
+export function isChallengeForm(form: Pick<GoalForm, 'sendTo'>): boolean {
+  return form.sendTo.trim() !== '';
+}
+
+/**
+ * Typing into "Send to". A challenge can't be Ongoing (fixed-length, 1-8
+ * weeks), so if Ongoing was picked when the form becomes a challenge, it
+ * moves to the default week count rather than leaving an option selected
+ * that the sheet now says isn't allowed. Clearing the field undoes nothing
+ * else -- the weeks stay, and Ongoing is simply offered again.
+ */
+export function withSendTo(form: GoalForm, sendTo: string): GoalForm {
+  const next = { ...form, sendTo };
+  if (isChallengeForm(next) && next.duration.kind === 'ongoing') {
+    return { ...next, duration: { kind: 'weeks', weeks: DEFAULT_DURATION_WEEKS } };
+  }
+  return next;
 }
 
 /** Prefills the unit from the activity's default_unit -- null (strength_training, other) leaves the unit picker empty. */
@@ -90,13 +118,20 @@ export function buildGoalCreatePayload(form: GoalForm): CommitmentCreate {
     throw new Error('buildGoalCreatePayload requires an activity - guard with canSaveGoal first');
   }
   const target = resolvedTarget(form.amount);
-  return {
+  const payload: CommitmentCreate = {
     activity: form.activity,
     target_value: target?.value ?? null,
     target_unit: target?.unit ?? null,
     sessions_per_week: form.sessionsPerWeek,
     duration_weeks: form.duration.kind === 'weeks' ? form.duration.weeks : null,
   };
+  // Same endpoint for both: the field's presence is what makes it a challenge,
+  // so a goal leaves it out entirely rather than sending null. Case is kept as
+  // typed -- the server matches usernames without regard to it.
+  if (isChallengeForm(form)) {
+    payload.recipient_username = form.sendTo.trim();
+  }
+  return payload;
 }
 
 const ACTIVITY_VERBS: Record<Activity, string> = {
@@ -137,13 +172,15 @@ export function goalSummarySentence(form: GoalForm): string | null {
   const verb = ACTIVITY_VERBS[form.activity];
   const frequency = frequencyClause(form.sessionsPerWeek);
   const duration = durationClause(form.duration);
+  // A challenge names who it's with -- the one clause a goal doesn't have.
+  const recipient = isChallengeForm(form) ? `, with ${form.sendTo.trim()}` : '';
 
   const target = resolvedTarget(form.amount);
   if (target) {
     const unitLabel = UNIT_LABELS[target.unit].long;
-    return `${verb} at least ${target.value} ${unitLabel}, ${frequency}, ${duration}.`;
+    return `${verb} at least ${target.value} ${unitLabel}, ${frequency}, ${duration}${recipient}.`;
   }
-  return `${verb} ${frequency}, ${duration}.`;
+  return `${verb} ${frequency}, ${duration}${recipient}.`;
 }
 
 /** The "How often" picker's own option labels, sharing sessionsPerWeekLabel with the card's terms line. */

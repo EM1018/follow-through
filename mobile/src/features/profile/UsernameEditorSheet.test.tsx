@@ -49,13 +49,33 @@ function findText(root: ReactTestInstance, text: string): ReactTestInstance | un
 }
 
 describe('UsernameEditorSheet', () => {
-  it('lowercases input as it is typed', () => {
+  it('keeps capitals as typed', () => {
     const { root } = renderWithClient(<UsernameEditorSheet onClose={jest.fn()} />);
     const input = root.findByType(TextInput);
     act(() => {
       input.props.onChangeText('Jordan_R');
     });
-    expect(root.findByType(TextInput).props.value).toBe('jordan_r');
+    expect(root.findByType(TextInput).props.value).toBe('Jordan_R');
+  });
+
+  it('sends a mixed-case username to the server exactly as typed', async () => {
+    (api.PATCH as jest.Mock).mockResolvedValue({
+      data: me({ username: 'Jordan_R' }),
+      error: undefined,
+      response: { ok: true, status: 200 },
+    });
+    const onClose = jest.fn();
+    const { root } = renderWithClient(<UsernameEditorSheet onClose={onClose} />);
+
+    act(() => {
+      root.findByType(TextInput).props.onChangeText('Jordan_R');
+    });
+    await act(async () => {
+      root.findAllByType(Button).find((n) => n.props.label === 'Save')!.props.onPress();
+      await waitFor(() => onClose.mock.calls.length > 0);
+    });
+
+    expect((api.PATCH as jest.Mock).mock.calls[0][1]).toEqual(expect.objectContaining({ body: { username: 'Jordan_R' } }));
   });
 
   it('disables Save for a too-short name', () => {
