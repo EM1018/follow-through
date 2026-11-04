@@ -1,16 +1,19 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "follow thru",
     "slug": "mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "followthru",
     "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.elian.mobile",
-      "appleTeamID": "875HK5ZKBK"
+      "bundleIdentifier": "com.elian.followthru",
+      "appleTeamID": "875HK5ZKBK",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +23,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.elian.mobile"
+      "package": "com.elian.followthru"
     },
     "web": {
       "output": "static",
